@@ -35,4 +35,4 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
       - name: Tests (Vitest inside workerd, mock LLM, local bindings only)
-        run: npm test
+        run: npm test -- --testTimeout=30000

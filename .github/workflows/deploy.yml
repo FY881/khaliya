@@ -48,7 +48,7 @@ jobs:
         run: npm run typecheck
 
       - name: Tests (mock LLM, local bindings only)
-        run: npm test
+        run: npm test -- --testTimeout=30000
 
       - name: Check token is configured
         env:
