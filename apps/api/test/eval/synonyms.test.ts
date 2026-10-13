@@ -71,6 +71,8 @@ describe("eval synonyms (ar-syn-v1)", () => {
     expect(grade("research-summarizer", "unanswered", "لا تذكر المصادر شيئًا عن أرباح الشركة في عام 2025. تغطي المصادر فقط معلومة أن عدد الموظفين بلغ 480 موظفًا (S1).").pass).toBe(true);
     // … but an echo of the inputs alone still fails, because the «sources don't say» slot cannot be echoed
     expect(grade("research-summarizer", "unanswered", "عدد الموظفين بلغ 480 موظفًا. كم بلغت أرباح الشركة في 2025؟").pass).toBe(false);
+    // 2nd live research design: «المصادر لا تغطي …» + a بلغ restatement is a correct answer
+    expect(grade("research-summarizer", "unanswered", "المصادر لا تغطي أرباح الشركة في 2025، لكنها تشير إلى أن عدد الموظفين بلغ 480 موظفًا (S1).").pass).toBe(true);
     // strong baseline's «لا توجد معلومات … في المصادر» satisfies the first slot, but it never restated the fact
     expect(grade("research-summarizer", "unanswered", "لا توجد معلومات عن أرباح الشركة في 2025 في المصادر المقدمة.").detail).toBe("missing الموظفين البالغ");
     // the task says «المصادر لا تجيب», so the reordered «لا تُجيب المصادر» is an echo of the task's own words here
