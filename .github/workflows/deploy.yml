@@ -1,0 +1,106 @@
+name: Deploy (manual)
+
+# Manual production deploy of the Khaliya Worker to the owner's free Cloudflare account.
+# Runs only when FY881 starts it by hand. Needs the repo secret CLOUDFLARE_API_TOKEN
+# (Workers Scripts:Edit, D1:Edit, Vectorize:Edit, Workers AI:Read on account c8b0…3e1f).
+on:
+  workflow_dispatch:
+    inputs:
+      migrate:
+        description: "Apply D1 migrations (--remote) before deploying"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: test → deploy → smoke
+    if: github.actor == 'FY881'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_ACCOUNT_ID: c8b0883984089d775584db766d8e3e1f
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/api/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Embed console assets
+        run: node ../../scripts/embed-console.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests (mock LLM, local bindings only)
+        run: npm test
+
+      - name: Check token is configured
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Repository secret CLOUDFLARE_API_TOKEN is not set (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+
+      - name: Apply D1 migrations (remote)
+        if: ${{ inputs.migrate }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler d1 migrations apply khaliya --remote -c wrangler.deploy.toml
+
+      # wrangler.deploy.toml serves the console from embedded files (src/deploy-entry.ts), so it needs no
+      # Static Assets upload and behaves the same with or without a proxy. It is also the only config
+      # with the Vectorize binding, i.e. the one that matches production.
+      - name: Deploy
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -o pipefail
+          npx wrangler deploy -c wrangler.deploy.toml 2>&1 | tee /tmp/deploy.log
+          url=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' /tmp/deploy.log | head -1)
+          ver=$(grep -oiE 'Version ID: *[0-9a-f-]+' /tmp/deploy.log | head -1 | awk '{print $NF}')
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "Deployed version: ${ver:-unknown}"
+
+      - name: Smoke test /api/health
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          if [ -z "$URL" ]; then echo "::error::Could not read the workers.dev URL from wrangler output"; exit 1; fi
+          for i in 1 2 3 4 5 6; do
+            body=$(curl -fsS --max-time 15 "$URL/api/health" || true)
+            if echo "$body" | grep -q '"ok":true'; then
+              echo "Health OK: $body"
+              exit 0
+            fi
+            echo "Attempt $i: not healthy yet"; sleep 10
+          done
+          echo "::error::/api/health did not return ok"; exit 1
+
+      - name: Summary
+        run: |
+          {
+            echo "### Khaliya deployed"
+            echo "- Version: \`${{ steps.deploy.outputs.version }}\`"
+            echo "- Migrations applied: ${{ inputs.migrate }}"
+            echo "- Health: ok"
+          } >> "$GITHUB_STEP_SUMMARY"

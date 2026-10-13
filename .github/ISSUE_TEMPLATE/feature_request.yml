@@ -1,0 +1,26 @@
+name: "✨ اقتراح ميزة · Feature request"
+description: "فكرة لتطوير خلية · An idea for Khaliya"
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: "المشكلة · Problem"
+      placeholder: "ما الذي يصعب الآن؟ · What is hard today?"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "الاقتراح · Proposal"
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: "الأمان والحدود · Safety & limits"
+      description: "هل يمسّ الدستور أو الحاكم أو طبقات T3/T4؟ · Does it touch the constitution, Governor or T3/T4 tiers?"
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "بدائل · Alternatives considered"

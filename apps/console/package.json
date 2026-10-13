@@ -1,0 +1,9 @@
+{
+  "name": "@khaliya/console",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Static owner console (no build step). Served by the API Worker's static assets, or deployable to Cloudflare Pages.",
+  "scripts": {
+    "pages:deploy": "npx wrangler pages deploy public --project-name khaliya-console"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "khaliya",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Khaliya (خلية) — self-evolving AI agent organization on the Cloudflare free tier",
+  "scripts": {
+    "install:all": "npm --prefix apps/api install",
+    "dev": "npm --prefix apps/api run dev",
+    "test": "npm --prefix apps/api test",
+    "typecheck": "npm --prefix apps/api run typecheck",
+    "dryrun": "npm --prefix apps/api run dryrun",
+    "check": "npm run typecheck && npm test && npm run dryrun",
+    "owner-secret": "node scripts/gen-owner-secret.mjs",
+    "console:pages:deploy": "npx wrangler pages deploy apps/console/public --project-name khaliya-console"
+  }
+}

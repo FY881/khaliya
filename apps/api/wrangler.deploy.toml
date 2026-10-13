@@ -1,0 +1,78 @@
+# Khaliya (خلية) API Worker — FREE TIER ONLY.
+# No R2, no paid add-ons. Everything here is available on the Workers Free plan.
+name = "khaliya-api"
+account_id = "c8b0883984089d775584db766d8e3e1f"
+main = "src/deploy-entry.ts"
+compatibility_date = "2026-09-15"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# The admin console (apps/console) is served from the same origin as the API via
+# Workers Static Assets (free). It can ALSO be deployed to Cloudflare Pages; see README.
+[vars]
+APP_NAME = "Khaliya"
+# "auto" = real free providers when keys exist, mock otherwise. "mock" = always mock.
+LLM_MODE = "auto"
+# Set to the Pages origin (e.g. https://khaliya-console.pages.dev) ONLY if the console is hosted on Pages.
+CONSOLE_ORIGIN = ""
+# Governor safety margin applied to free-tier quotas (0.70 = use at most 70%).
+QUOTA_MARGIN = "0.70"
+POPULATION_CAP = "24"
+# "on" = the */30 cron also runs one evolution tick per hour (1 proposal, lab budget). Default off.
+EVOLUTION_AUTO = "off"
+# Sandbox fuel cap (interrupt ticks ≈ 10k guest ops) for forged-tool runs and admission on the free plan (10 ms CPU).
+FORGE_FUEL_CAP = "8"
+
+# Secrets (never in this file):  wrangler secret put <NAME>
+#   OWNER_TOTP_SECRET  base32 TOTP seed for the owner's authenticator app
+#   SESSION_SECRET     random 32+ byte string used to sign the session cookie
+#   GEMINI_KEY         one or more Gemini keys, comma-separated (rotation on 429)
+#   OPENROUTER_KEY     one or more OpenRouter keys, comma-separated (only ":free" models are ever called)
+
+[[d1_databases]]
+binding = "DB"
+database_name = "khaliya"
+database_id = "4e12827f-2b35-4063-a6ca-609ae243f888" # replace after `wrangler d1 create khaliya`
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "AGENT_HOME"
+class_name = "AgentHome"
+
+[[durable_objects.bindings]]
+name = "JOB_RUNNER"
+class_name = "JobRunner"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AgentHome"] # SQLite-backed DOs are on the free plan
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["JobRunner"] # background jobs: one alarm-driven chunk per invocation (free plan)
+
+# Workers AI — free daily neuron allowance; last-resort LLM fallback.
+[ai]
+binding = "AI"
+
+# Vectorize (free plan): KB embeddings, @cf/baai/bge-m3 = 1024 dims, cosine. Created via `wrangler vectorize create khaliya-kb`.
+[[vectorize]]
+binding = "KB_VECTORS"
+index_name = "khaliya-kb"
+
+# Cron Triggers (free plan allows up to 5): budget/day roll + health tick.
+[triggers]
+crons = ["*/30 * * * *", "5 0 * * *"]
+
+# Queues (optional). The code works without them (falls back to DO alarms).
+# To enable: `wrangler queues create khaliya-jobs`, then uncomment:
+# [[queues.producers]]
+# binding = "JOBS"
+# queue = "khaliya-jobs"
+# [[queues.consumers]]
+# queue = "khaliya-jobs"
+# max_batch_size = 5
+# max_retries = 2
+
+[observability]
+enabled = true

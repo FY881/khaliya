@@ -1,0 +1,38 @@
+name: CI
+
+# Lint/typecheck + tests only. No deploy, no secrets, no publishing.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: typecheck + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/api/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Generate embedded console assets
+        run: node ../../scripts/embed-console.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests (Vitest inside workerd, mock LLM, local bindings only)
+        run: npm test

@@ -1,0 +1,25 @@
+# dependencies / build
+node_modules/
+dist/
+.wrangler/
+*.log
+.DS_Store
+apps/api/src/embedded-assets.gen.ts
+
+# secrets — never commit
+.dev.vars
+.dev.vars.*
+*.env
+.env
+.env.*
+.owner
+.owner*
+*secret*.json
+*.pem
+*.key
+secrets/
+cookies*.txt
+
+# not for the public repo (lawyer-unreviewed drafts, marketing site with Trust Center / pricing)
+legal/
+apps/site/
