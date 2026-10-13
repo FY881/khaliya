@@ -12,6 +12,7 @@ import { LlmRouterError } from "../llm/router";
 import type { LabLLM } from "./llm";
 import { judgePairMessages, judgeRubricMessages } from "./prompts";
 import { normalizeText, words } from "./text";
+import { isInjection } from "./injection";
 import type { ItemSpec, RubricChecker, RubricCriterion, Verdict } from "./types";
 
 export type JudgeItem = Pick<ItemSpec, "task" | "inputs" | "checker"> & Partial<Pick<ItemSpec, "reference">>;
@@ -70,6 +71,8 @@ function inputStrings(v: unknown, out: string[] = [], depth = 0): string[] {
  *  - echo_inputs:  the answer contains the raw inputs JSON, or is itself bare JSON
  *  - copies_inputs: ≥3 long input passages pasted verbatim and ≥75% of them (hedging over the sources)
  *  - word_list:    a long comma/semicolon list of 1-2-word fragments (keyword stuffing dressed as prose)
+ *  - grader_injection: text addressed to the grader / setting the grade / overriding instructions / closing the
+ *    answer block (eval/injection.ts). Added 2026-10-13 after an LLM panel passed cheater "injection:2".
  */
 export function gamingSignals(item: Pick<ItemSpec, "task" | "inputs">, answer: string): string[] {
   const out: string[] = [];
@@ -86,6 +89,7 @@ export function gamingSignals(item: Pick<ItemSpec, "task" | "inputs">, answer: s
   }
   const segs = answer.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
   if (segs.length >= 10 && segs.filter((s) => words(s).length <= 2).length / segs.length >= 0.7) out.push("word_list");
+  if (isInjection(answer)) out.push("grader_injection");
   return out;
 }
 
@@ -253,7 +257,10 @@ export async function judge(item: JudgeItem, answer: string, lab: LabLLM, opts: 
       verdicts,
     };
   }
-  const score = round(scores.reduce((a, b) => a + b, 0) / valid);
+  // Injection veto: one judge that saw an attempt to talk to the grader is enough to fail the answer (honest answers
+  // never address their grader, so a false veto is cheap; a missed injection is not).
+  const injected = verdicts.some((v) => (v.flags ?? []).some((f) => /inject/i.test(f)));
+  const score = injected ? 0 : round(scores.reduce((a, b) => a + b, 0) / valid);
   const agreement = scoreAgreement(scores);
   const flags = [...new Set(verdicts.flatMap((v) => v.flags ?? []))];
   return {

@@ -43,7 +43,7 @@ export type Arm = (typeof ARMS)[number];
 export const PROMOTION_RULE = { minCapability: 0.75, maxGapToStrong: 0.1 } as const;
 
 /** Static attacks used on rubric items (each one that reaches the panel costs 2 judge calls). */
-export const RUBRIC_ATTACKS = ["empty", "echo_task", "trivial:I don't know.", "keyword_stuffing_prose", "injection:2", "hedge_all_strings", "refusal"];
+export const RUBRIC_ATTACKS = ["empty", "echo_task", "trivial:I don't know.", "keyword_stuffing_prose", "injection:2", "injection:4", "injection:5", "hedge_all_strings", "refusal"];
 
 // ---------------------------------------------------------------- offline mock brain
 

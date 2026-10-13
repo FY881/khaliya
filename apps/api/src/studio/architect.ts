@@ -19,6 +19,24 @@ import { arNorm } from "../eval/synonyms";
 import type { StudioBrief } from "./types";
 import { bodyOf, CRAFT_MARKER, craftBlock, refineMessages, REVISION_MARKER, revisionNotes, type RefineFailure } from "./craft";
 
+/**
+ * Reply budget for architect/refiner calls. 1800 tokens cut long Arabic prompts mid-JSON (Arabic costs ~1 token per
+ * 2–3 chars, plus JSON escaping); extractJson then returned null and the draft was reported as "too short" (live
+ * research-summarizer refinements, 2026-10-13). Tokens are not the binding free-tier limit (calls are).
+ */
+export const ARCHITECT_MAX_TOKENS = 3600;
+
+/**
+ * Parse an architect/refiner reply into a draft, with a precise reason when it can't (so a live report says WHY:
+ * cut off at the token limit, not JSON, or no system_prompt) instead of lumping everything into "too short".
+ */
+export function parseDraft(text: string): { prompt?: string; note?: string; problem?: string } {
+  const j = extractJson<{ system_prompt?: unknown; note?: unknown }>(text ?? "");
+  if (!j) return { problem: /"system_prompt"\s*:/.test(text ?? "") ? "reply cut off (unterminated JSON)" : "reply is not JSON" };
+  if (typeof j.system_prompt !== "string") return { problem: "reply has no system_prompt string" };
+  return { prompt: j.system_prompt, note: typeof j.note === "string" ? j.note : undefined };
+}
+
 export const STUDIO_ACTOR = "system:studio";
 export const ARCHITECT_AGENT = "lab:studio:architect";
 /** Free model chain for designed service agents (same order as the strong baseline). */
@@ -79,7 +97,8 @@ export interface ArchitectResult {
 
 /** Why an LLM draft is rejected (null = acceptable). */
 export function draftProblem(text: unknown, b?: StudioBrief, revision?: string): string | null {
-  if (typeof text !== "string" || text.trim().length < 80) return "draft too short";
+  if (typeof text !== "string") return "draft missing";
+  if (text.trim().length < 80) return `draft too short (${text.trim().length} chars)`;
   if (text.length > MAX_BODY_CHARS) return "draft too long";
   if (!hasArabic(text)) return "draft is not Arabic-first";
   if (t4Like(text)) return "draft asks for autonomy / approval bypass";
@@ -144,14 +163,14 @@ export async function architect(b: StudioBrief, lab: LabLLM | null, opts: { vers
   let note = "template";
   if (lab && lab.mode !== "mock") {
     try {
-      const res = await lab.complete(ARCHITECT_AGENT, { messages: architectMessages(b), temperature: 0.3, json: true, maxTokens: 1800 });
-      const j = extractJson<{ system_prompt?: unknown; note?: unknown }>(res.text);
-      const problem = draftProblem(j?.system_prompt, b);
+      const res = await lab.complete(ARCHITECT_AGENT, { messages: architectMessages(b), temperature: 0.3, json: true, maxTokens: ARCHITECT_MAX_TOKENS });
+      const d = parseDraft(res.text);
+      const problem = d.problem ?? draftProblem(d.prompt, b);
       if (!problem) {
-        body = String(j!.system_prompt);
+        body = String(d.prompt);
         source = "llm";
-        note = typeof j?.note === "string" ? j.note : `llm draft (${res.model})`;
-      } else note = `template (llm draft rejected: ${problem})`;
+        note = d.note ?? `llm draft (${res.model})`;
+      } else note = `template (llm draft rejected: ${problem}; ${res.model}, ${res.tokensOut} tokens out)`;
     } catch (e) {
       if (e instanceof LabBudgetError) throw e;
       note = `template (llm error: ${String((e as Error)?.message ?? e).slice(0, 120)})`;
@@ -184,17 +203,17 @@ export async function refine(
   let body = body0;
   let source: ArchitectResult["source"] = "template";
   let note = `refine r${opts.round}: revision notes`;
-  let revision: string | undefined = revisionNotes(failures, opts.round);
+  let revision: string | undefined = revisionNotes(failures, opts.round, b.safety.domain);
   if (lab && lab.mode !== "mock") {
     try {
-      const res = await lab.complete(ARCHITECT_AGENT, { messages: refineMessages(b, body0, failures), temperature: 0.3, json: true, maxTokens: 1800 });
-      const j = extractJson<{ system_prompt?: unknown; note?: unknown }>(res.text);
-      const problem = draftProblem(j?.system_prompt, b, revision);
+      const res = await lab.complete(ARCHITECT_AGENT, { messages: refineMessages(b, body0, failures), temperature: 0.3, json: true, maxTokens: ARCHITECT_MAX_TOKENS });
+      const d = parseDraft(res.text);
+      const problem = d.problem ?? draftProblem(d.prompt, b, revision);
       if (!problem) {
-        body = String(j!.system_prompt);
+        body = String(d.prompt);
         source = "llm";
-        note = `refine r${opts.round}: ${typeof j?.note === "string" ? j.note : res.model}`;
-      } else note = `refine r${opts.round}: notes only (llm draft rejected: ${problem})`;
+        note = `refine r${opts.round}: ${d.note ?? res.model}`;
+      } else note = `refine r${opts.round}: notes only (llm draft rejected: ${problem}; ${res.model}, ${res.tokensOut} tokens out)`;
     } catch (e) {
       if (e instanceof LabBudgetError) throw e;
       note = `refine r${opts.round}: notes only (llm error: ${String((e as Error)?.message ?? e).slice(0, 120)})`;

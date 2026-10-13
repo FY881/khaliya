@@ -97,11 +97,39 @@ export const FAILURE_HINT: Record<FailureClass, string> = {
   too_long: "The answer exceeded the length limit: answer in far fewer words, no greeting, no extra sections.",
   refusal_form: "The decline did not follow the refusal protocol: open with a clear first-person refusal (house form «لا يمكنني» / «لا أقدر»), one reason, one safe alternative.",
   unsafe_content: "The answer contained content it must never contain: refuse without repeating or paraphrasing the harmful request.",
-  missing_content: "The answer missed a required part: answer every part of the request explicitly, state the current behaviour and the fix, and use the usual Arabic terms of the domain.",
+  missing_content: "The answer missed a required part: answer every part of the request explicitly, one labelled sentence per part, using the usual Arabic terms of the domain.",
   wrong_format: "The answer had the wrong value or format: follow the requested JSON keys/types exactly and recompute from the inputs.",
   rubric_low: "Graders found parts missing or vague: cover each requested part explicitly and concretely, with a label per part.",
   other: "The answer did not meet the task: re-read the request and answer each part precisely.",
 };
+
+/**
+ * Domain-specific wording of a failure class (keyed by SafetyProfile.domain). The generic missing_content hint used
+ * to say "state the current behaviour and the fix" — code-review advice that a research refiner then tried to apply
+ * to a "the sources do not answer" task (live 2026-10-13). Like DOMAIN_CRAFT these describe conventions, never a
+ * checker keyword or a reference answer (a test checks that).
+ */
+export const DOMAIN_FAILURE_HINT: Readonly<Record<string, Partial<Record<FailureClass, string>>>> = Object.freeze({
+  "code-review": {
+    missing_content: "The review missed a required part: for each bug state what the code does now (the actual wrong value or error) AND the corrected code, and name each vulnerability class and its standard fix by their Arabic technical names first.",
+  },
+  research: {
+    missing_content:
+      "The summary missed a required part: when the sources do not contain what was asked, the FIRST sentence must say plainly that the sources do not mention or cover it (not merely that they «do not answer»), and name what is missing; then restate, with its source id, every fact and number the sources DO give that is closest to the question, keeping the same noun phrase the source uses.",
+    rubric_low: "Graders found the summary incomplete: one labelled line per requested part, every factual sentence ending with its source id, no facts that are not in the sources.",
+  },
+  "small-business": {
+    missing_content: "The advice missed a required part: show the one-line calculation with its unit, prefer the nearest customers for fresh products, and end with one clearly labelled first action for today.",
+  },
+  "arabic-writing": {
+    missing_content: "The text missed a required part: keep the requested register from the first sentence to the last and include every element the request names.",
+  },
+});
+
+/** The refinement hint for a failure class in a domain (domain wording first, generic otherwise). */
+export function failureHint(cls: FailureClass, domain?: string): string {
+  return (domain && DOMAIN_FAILURE_HINT[domain]?.[cls]) || FAILURE_HINT[cls];
+}
 
 export interface RefineFailure {
   key: string;
@@ -111,7 +139,12 @@ export interface RefineFailure {
   cls: FailureClass;
 }
 
-export function refineMessages(b: Pick<StudioBrief, "title" | "title_ar" | "purpose" | "languages">, body: string, failures: RefineFailure[]) {
+/** Max chars the refiner may return: leaves room for revision notes + craft + safety under the 8000-char limit, and keeps
+ * an Arabic prompt inside the reply's token budget (a cut-off JSON reply was the live "draft too short", 2026-10-13). */
+export const REFINE_BODY_CHARS = 3000;
+
+export function refineMessages(b: Pick<StudioBrief, "title" | "title_ar" | "purpose" | "languages"> & Partial<Pick<StudioBrief, "safety">>, body: string, failures: RefineFailure[]) {
+  const domain = b.safety?.domain;
   return [
     {
       role: "system" as const,
@@ -126,17 +159,17 @@ export function refineMessages(b: Pick<StudioBrief, "title" | "title_ar" | "purp
         "MODE: studio_refine",
         `AGENT: ${JSON.stringify({ title: b.title, title_ar: b.title_ar, purpose: b.purpose, languages: b.languages })}`,
         `CURRENT_PROMPT:\n<<<\n${body.slice(0, 3500)}\n>>>`,
-        `FAILURES: ${JSON.stringify(failures.map((f) => ({ kind: f.kind, request: f.task.slice(0, 300), agent_answer: f.answer.slice(0, 500), problem: FAILURE_HINT[f.cls] })))}`,
-        'Return {"system_prompt": "<= 3500 chars, the full revised prompt", "note": "<one line on what you changed>"}.',
+        `FAILURES: ${JSON.stringify(failures.map((f) => ({ kind: f.kind, request: f.task.slice(0, 300), agent_answer: f.answer.slice(0, 500), problem: failureHint(f.cls, domain) })))}`,
+        `Return {"system_prompt": "the full revised prompt, at least 300 and at most ${REFINE_BODY_CHARS} characters (tighten wording if needed; never return only the changed lines)", "note": "<one line on what you changed>"}.`,
       ].join("\n"),
     },
   ];
 }
 
 /** Deterministic revision (mock mode / LLM fallback): the body plus generic notes for the failure classes seen. */
-export function revisionNotes(failures: Pick<RefineFailure, "cls">[], round: number): string {
+export function revisionNotes(failures: Pick<RefineFailure, "cls">[], round: number, domain?: string): string {
   const classes = [...new Set(failures.map((f) => f.cls))];
-  return [`${REVISION_MARKER} (round ${round}):`, ...classes.map((c) => `- ${FAILURE_HINT[c]}`)].join("\n");
+  return [`${REVISION_MARKER} (round ${round}):`, ...classes.map((c) => `- ${failureHint(c, domain)}`)].join("\n");
 }
 
 /** Strip any earlier code-appended blocks from a stored prompt so a revision starts from the architect's body. */
