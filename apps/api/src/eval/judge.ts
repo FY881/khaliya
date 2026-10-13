@@ -7,6 +7,7 @@
  */
 import { extractJson } from "../util";
 import { runDeterministic } from "./checkers";
+import { promptTextOf } from "./synonyms";
 import { LlmRouterError } from "../llm/router";
 import type { LabLLM } from "./llm";
 import { judgePairMessages, judgeRubricMessages } from "./prompts";
@@ -161,8 +162,9 @@ export interface PairwiseResult {
  */
 export async function pairwise(item: JudgeItem, answerA: string, answerB: string, lab: LabLLM, opts: { judges?: number; agentId?: string } = {}): Promise<PairwiseResult> {
   if (item.checker.type !== "rubric") {
-    const a = runDeterministic(item.checker, answerA).pass;
-    const b = runDeterministic(item.checker, answerB).pass;
+    const ctx = { prompt: promptTextOf(item) };
+    const a = runDeterministic(item.checker, answerA, ctx).pass;
+    const b = runDeterministic(item.checker, answerB, ctx).pass;
     return { winner: a === b ? "draw" : a ? "A" : "B", agreement: 1, position_consistency: 1, votes: [] };
   }
   const c = item.checker;
@@ -203,7 +205,7 @@ const round = (n: number) => Math.round(n * 1000) / 1000;
 
 /** Grade one answer. Never throws on bad judge output; LabBudgetError (budget/kill switch) propagates. */
 export async function judge(item: JudgeItem, answer: string, lab: LabLLM, opts: JudgeOptions = {}): Promise<JudgeResult> {
-  const pre = runDeterministic(item.checker, answer);
+  const pre = runDeterministic(item.checker, answer, { prompt: promptTextOf(item) });
   if (item.checker.type !== "rubric" || pre.method === "deterministic") return { ...pre, verdicts: [] };
 
   const c = item.checker;

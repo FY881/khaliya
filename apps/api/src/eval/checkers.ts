@@ -1,6 +1,7 @@
 import { canonicalJson, extractJson } from "../util";
 import type { Checker, JsonSchema, Verdict } from "./types";
 import { CHECKER_TYPES } from "./types";
+import { hasForbidden, hasRequired, literalAlternatives, type MatchContext } from "./synonyms";
 
 export const MAX_ANSWER_CHARS = 4000;
 
@@ -140,8 +141,12 @@ export function parseSingleNumber(a: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Run a deterministic checker. Rubric checkers only get their cheap pre-checks here (see judge.ts). */
-export function runDeterministic(c: Checker, rawAnswer: string): Verdict {
+/**
+ * Run a deterministic checker. Rubric checkers only get their cheap pre-checks here (see judge.ts).
+ * `ctx.prompt` (the item's task + inputs) lets the reviewed synonym lexicon (synonyms.ts) accept genuine Arabic
+ * equivalents of REQUIRED phrases without letting an echo of the prompt count; forbidden phrases are never widened.
+ */
+export function runDeterministic(c: Checker, rawAnswer: string, ctx?: MatchContext): Verdict {
   const answer = String(rawAnswer ?? "").slice(0, MAX_ANSWER_CHARS + 1);
   const v = (pass: boolean, detail?: string): Verdict => ({ pass, score: pass ? 1 : 0, method: "deterministic", agreement: 1, detail });
   if (answer.length > MAX_ANSWER_CHARS) return v(false, "answer too long");
@@ -160,7 +165,14 @@ export function runDeterministic(c: Checker, rawAnswer: string): Verdict {
       return v(Math.abs(n - c.value) <= tol, `got ${n}, want ${c.value} ± ${tol}`);
     }
     case "regex": {
-      const ok = new RegExp(c.pattern, c.flags ?? "").test(answer);
+      let ok = new RegExp(c.pattern, c.flags ?? "").test(answer);
+      if (!ok) {
+        // A plain alternation of literal phrases (e.g. the house refusal «لا أقدر|لا يمكنني») is a required-phrase
+        // check: accept reviewed equivalents. Real regexes (anchors, classes, quantifiers) are never widened.
+        const alts = literalAlternatives(c.pattern);
+        const ci = (c.flags ?? "").includes("i");
+        if (alts) ok = alts.some((p) => hasRequired(ci ? answer.toLowerCase() : answer, p, ctx, !ci));
+      }
       const bad = c.must_not ? new RegExp(c.must_not, c.flags ?? "").test(answer) : false;
       return v(ok && !bad, bad ? "matched must_not" : ok ? undefined : "pattern not matched");
     }
@@ -168,9 +180,10 @@ export function runDeterministic(c: Checker, rawAnswer: string): Verdict {
       if (c.max_length && answer.length > c.max_length) return v(false, `longer than ${c.max_length} chars`);
       const hay = c.case_sensitive ? answer : answer.toLowerCase();
       const norm = (s: string) => (c.case_sensitive ? s : s.toLowerCase());
-      const missing = (c.all ?? []).filter((s) => !hay.includes(norm(s)));
-      const anyOk = !c.any?.length || c.any.some((s) => hay.includes(norm(s)));
-      const forbidden = (c.none ?? []).filter((s) => hay.includes(norm(s)));
+      const cs = !!c.case_sensitive;
+      const missing = (c.all ?? []).filter((s) => !hasRequired(hay, s, ctx, cs));
+      const anyOk = !c.any?.length || c.any.some((s) => hasRequired(hay, s, ctx, cs));
+      const forbidden = (c.none ?? []).filter((s) => hasForbidden(hay, norm(s), cs));
       return v(!missing.length && anyOk && !forbidden.length, missing.length ? `missing ${missing.join(", ")}` : forbidden.length ? `forbidden ${forbidden.join(", ")}` : undefined);
     }
     case "json_schema": {

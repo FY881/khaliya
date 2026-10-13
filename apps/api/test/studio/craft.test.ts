@@ -8,6 +8,8 @@ import {
   composePrompt,
   constitutionCheck,
   CRAFT_MARKER,
+  craftBlock,
+  copiesTask,
   draftProblem,
   failureClass,
   FAILURE_HINT,
@@ -32,9 +34,9 @@ describe("studio designer craft", () => {
       const blk = safetyBlock(b.safety);
       for (const l of REFUSAL_PROTOCOL) expect(blk).toContain(l);
     }
-    // the protocol names an opener the safety checker accepts, and steers away from «لا أستطيع»
+    // the protocol names an opener the safety checker accepts, and says an apology alone is not a refusal
     expect(re.test(REFUSAL_PROTOCOL[0])).toBe(true);
-    expect(REFUSAL_PROTOCOL[0]).toMatch(/never «لا أستطيع»/);
+    expect(REFUSAL_PROTOCOL[0]).toMatch(/«عذرًا» alone is not a refusal/);
   });
 
   it("composed prompts: body → craft → safety (last, once), within the constitution's prompt limit", async () => {
@@ -80,6 +82,27 @@ describe("studio designer craft", () => {
         expect(p.includes(t.reference), `${b.id}.${t.key} reference`).toBe(false);
       }
     }
+  });
+
+  it("craft blocks name no contains-checker keyword of any seed task (no keyword leak; checkers are synonym-based)", () => {
+    for (const b of STUDIO_BRIEFS) {
+      const blk = craftBlock(b);
+      for (const t of b.tasks) {
+        if (t.checker.type !== "contains") continue;
+        for (const k of [...(t.checker.all ?? []), ...(t.checker.any ?? [])]) expect(blk.includes(k), `${b.id}.${t.key}: ${k}`).toBe(false);
+      }
+    }
+  });
+
+  it("drafts that paste eval task text are rejected (live refine leak 2026-10-13); templates never do", () => {
+    const b = brief("research-summarizer");
+    const leaked = "عند الإجابة اذكر المصدر بين قوسين لكل جملة وكن مختصرًا وواضحًا. إذا لم تجب المصادر عن سؤال المستخدم، يجب أن تكتب ردًا يوضّح ذلك ويذكر ما تغطيه المصادر فعلًا، مع ذكر رمز المصدر.";
+    expect(copiesTask(leaked, b)).toBe(true); // the live refine output repeated a 7-word run of the task …
+    expect(copiesTask("اذكر بوضوح في أول جملة أن المادة المعطاة لا تغطي المطلوب، ثم لخّص ما تغطيه مع رمز كل مصدر بين قوسين.", b)).toBe(false); // a convention in its own words is fine
+    const pasted = `اكتب بإيجاز ووضوح مع ذكر المصادر دائمًا لكل معلومة. ${b.tasks.find((t) => t.key === "unanswered")!.task}`;
+    expect(copiesTask(pasted, b)).toBe(true); // a verbatim paste is caught
+    expect(draftProblem(pasted, b)).toMatch(/copies eval task text/);
+    for (const x of STUDIO_BRIEFS) expect(copiesTask(templatePrompt(x), x), x.id).toBe(false);
   });
 
   it("failureClass abstracts verdict details; refine feedback never carries checker keywords or references", () => {

@@ -15,6 +15,7 @@ import { CONSTITUTION } from "../constitution";
 import { suiteIdOf } from "./briefs";
 import { constitutionCheck, safetyBlock, SAFETY_MARKER, t4Like, type ConstitutionReport } from "./guardrails";
 import { hasArabic } from "./text";
+import { arNorm } from "../eval/synonyms";
 import type { StudioBrief } from "./types";
 import { bodyOf, CRAFT_MARKER, craftBlock, refineMessages, REVISION_MARKER, revisionNotes, type RefineFailure } from "./craft";
 
@@ -85,7 +86,27 @@ export function draftProblem(text: unknown, b?: StudioBrief, revision?: string):
   if (text.includes(SAFETY_MARKER)) return "draft writes its own safety block";
   if (text.includes(CRAFT_MARKER) || text.includes(REVISION_MARKER)) return "draft writes a code-appended block";
   if (b && composePrompt(b, text, revision).length > CONSTITUTION.genomeLimits.system_prompt_chars) return "composed prompt too long";
+  if (b && copiesTask(text, b)) return "draft copies eval task text";
   return null;
+}
+
+/** Window (in words) of task text that a draft may not repeat verbatim. */
+export const TASK_COPY_WINDOW = 7;
+
+/**
+ * True when a draft repeats any TASK_COPY_WINDOW-word run of one of the brief's eval task texts or reference answers.
+ * Live finding 2026-10-13: a research-summarizer refinement pasted the failing task's own wording into the prompt.
+ * The refiner sees task text (it must, to know what went wrong) — this keeps it from turning that into a test-shaped prompt.
+ */
+export function copiesTask(text: string, b: Pick<StudioBrief, "tasks">): boolean {
+  const w = (s: string) => arNorm(s).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const hay = ` ${w(text).join(" ")} `;
+  for (const t of b.tasks)
+    for (const src of [t.task, t.reference]) {
+      const ws = w(src);
+      for (let i = 0; i + TASK_COPY_WINDOW <= ws.length; i++) if (hay.includes(` ${ws.slice(i, i + TASK_COPY_WINDOW).join(" ")} `)) return true;
+    }
+  return false;
 }
 
 /** Working prompt layout: architect body, [revision notes], answer craft, safety block (always last). */

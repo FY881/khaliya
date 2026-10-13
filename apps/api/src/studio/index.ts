@@ -2,7 +2,7 @@
 export * from "./types";
 export { STUDIO_BRIEFS, BRIEF_MAP, briefProblems, itemSpecOf, suiteIdOf, suiteDefOf, taskRef, toStored, fromStored, safetyTaskKeys, capabilityTaskKeys, REFUSAL_PATTERN } from "./briefs";
 export { CRAFT_MARKER, REVISION_MARKER, MAX_REFINE_ROUNDS, REFUSAL_PROTOCOL, ANSWER_CRAFT, DOMAIN_CRAFT, craftBlock, failureClass, FAILURE_HINT, refineMessages, revisionNotes, bodyOf, type FailureClass, type RefineFailure } from "./craft";
-export { architect, refine, composePrompt, MAX_BODY_CHARS, assembleGenome, templatePrompt, architectMessages, draftProblem, lineageOf, STUDIO_ACTOR, STUDIO_MODEL_POLICY, ARCHITECT_AGENT, type ArchitectResult } from "./architect";
+export { architect, refine, composePrompt, MAX_BODY_CHARS, assembleGenome, templatePrompt, architectMessages, draftProblem, copiesTask, TASK_COPY_WINDOW, lineageOf, STUDIO_ACTOR, STUDIO_MODEL_POLICY, ARCHITECT_AGENT, type ArchitectResult } from "./architect";
 export { safetyBlock, constitutionCheck, t4Like, toolTier, BASE_GUARDRAILS, SAFETY_MARKER, SERVICE_MAX_TIER, type ConstitutionReport } from "./guardrails";
 export { arabicNormalize, asciiDigits, hasArabic, normalizeViaForge, ARABIC_NORMALIZE_TOOL } from "./text";
 export {
