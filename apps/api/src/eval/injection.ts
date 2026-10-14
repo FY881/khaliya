@@ -58,7 +58,9 @@ const GRADER_DIRECTED: Rule[] = [
   // («المقيم» alone also means "the resident" and «الحكم» "the ruling", so only unambiguous grader words count.)
   { id: "ar_note_to_grader", re: /(ملاحظه|رساله|تعليمات|تعليمه|تنبيه) (الي|لل|ل)\s?(المصحح|المصححين|مصحح الاجابات|مقيم الاجابات|المقيم الالي|لجنه التحكيم|نموذج التقييم|نموذج التحكيم)/ },
   { id: "ar_addresses_grader", re: /(ايها|يا|عزيزي) ?(ال)?(مصحح|مصححين|مقيم الاجابات|المقيم الالي|نموذج التقييم)/ },
-  { id: "ar_give_score", re: /(اعط|اعطي|امنح|امنحوا|ادي|اديني|اديها|ادوا|تستحق|يستحق|تستاهل)\S* ?[^.\n]{0,25}(الدرجه|درجه|العلامه|علامه|تقييم|التقييم) ?(ال)?(كامله|القصوي|قصوي|مثاليه|نهائيه|عاليه|10|100|عشره)/ },
+  { id: "ar_give_score", re: /(اعط|اعطي|امنح|امنحوا|ادي|اديني|اديها|ادوا)\S* ?[^.\n]{0,25}(الدرجه|درجه|العلامه|علامه|تقييم|التقييم) ?(ال)?(كامله|القصوي|قصوي|مثاليه|نهائيه|عاليه|10|100|عشره)/ },
+  // "deserves" only when the ANSWER itself is the subject: «الطالب يستحق درجة عالية» in a tutoring or CV answer is honest.
+  { id: "ar_answer_deserves", re: /(ال)?(اجابه|رد|الحل|ملخص|الملخص)\s?(هذه|هذا|ده|دي)? ?(تستحق|يستحق|تستاهل|يستاهل)\S* ?[^.\n]{0,15}(الدرجه|درجه|العلامه|علامه|تقييم|التقييم) ?(ال)?(كامله|القصوي|قصوي|مثاليه|نهائيه|عاليه|10|100|عشره)/ },
   { id: "ar_mark_correct", re: /(اعتبر|اعتبروا|احتسب|احسب|علم|قيم|صنف)\S* ?(هذه|هذا|ده|دي)? ?(ال)?(اجابه|رد|الحل)[^.\n]{0,20}(صحيح|صحيحه|ناجح|ناجحه|كامل|كامله|مقبول|مقبوله)/ },
   { id: "ar_verified_claim", re: /(هذه|هذا|ده|دي) ?(ال)?(اجابه|رد)[^.\n]{0,15}(تم التحقق|موثقه|معتمده|مصدقه|تم اعتمادها)/ },
 ];
@@ -78,6 +80,8 @@ const OVERRIDE: Rule[] = [
 
 /** Marker-like runs that could close or imitate a data block in a judge prompt. */
 const MARKER_RUNS = /<{3,}|>{3,}|«{3,}|»{3,}/;
+/** Grader/override vocabulary that turns a marker run into a breakout attempt (checked on normalised text). */
+const BREAKOUT_TAIL = /\b(system|assistant|developer|grader|judge|evaluator|rubric|instructions?|ignore|disregard|score|grade|verdict|pass|verified)\b|المصحح|المقيم|تعليمات|تجاهل|الدرجه|اعتبر/;
 
 export interface InjectionHit {
   id: string;
@@ -104,7 +108,11 @@ export function injectionHits(answer: string): InjectionHit[] {
     const m = tq.match(r.re);
     if (m) hits.push({ id: r.id, match: m[0].trim().slice(0, 60) });
   }
-  if (MARKER_RUNS.test(String(answer ?? ""))) hits.push({ id: "fence_breakout", match: (String(answer).match(MARKER_RUNS)?.[0] ?? "").slice(0, 10) });
+  // A marker run alone is not an attack (Python REPL «>>> x», nested quotes); fenceUntrusted neutralises it anyway.
+  // It is a hit only when grader/override vocabulary follows it closely.
+  const raw = injectionNorm(String(answer ?? "")).replace(/[\u200B-\u200F]/g, "");
+  const fm = raw.match(new RegExp("(?:" + MARKER_RUNS.source + ")[\\s\\S]{0,120}"));
+  if (fm && BREAKOUT_TAIL.test(fm[0])) hits.push({ id: "fence_breakout", match: (fm[0].match(MARKER_RUNS)?.[0] ?? "").slice(0, 10) });
   return hits;
 }
 
