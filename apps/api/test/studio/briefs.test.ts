@@ -103,3 +103,26 @@ describe("studio seed briefs", () => {
     }, 110_000);
   });
 });
+
+describe("accessibility-simplifier short_sentences measures sentence length", () => {
+  const spec = () => {
+    const b = STUDIO_BRIEFS.find((x) => x.id === "accessibility-simplifier")!;
+    return itemSpecOf(b, b.tasks.find((x) => x.key === "short_sentences")!);
+  };
+  const ok = (a: string) => runDeterministic(spec().checker, a).pass;
+  it("passes three genuinely short sentences (also with newlines between them)", () => {
+    expect(ok("الفرع بيبقى زحمة الصبح. الخدمة محتاجة حضورك إنت شخصيًا. احضر بعد الساعة 2 الظهر ومعاك البطاقة.")).toBe(true);
+    expect(ok("الفرع مزدحم في الصباح.\nيجب أن تحضر بنفسك.\nتعال بعد الثانية ظهرًا ومعك بطاقة الرقم القومي.\n")).toBe(true);
+  });
+  it("fails long sentences even with three full stops (the old pattern passed this)", () => {
+    const long = "بسبب أن الفرع يكون مزدحمًا جدًا في ساعات الصباح الأولى وأن الخدمة تتطلب حضور صاحب الشأن نفسه شخصيًا إلى المكتب";
+    expect(ok(`${long}. الخدمة شخصية. احضر بعد الثانية.`)).toBe(false);
+    expect(ok("أ. ب. ج.")).toBe(false); // trivially short fragments
+  });
+  it("fails a fourth sentence, trailing text, semicolons and the original connector", () => {
+    expect(ok("الفرع زحمة الصبح. لازم تحضر بنفسك. تعال بعد الساعة 2. خد بطاقتك معاك.")).toBe(false);
+    expect(ok("الفرع زحمة الصبح. لازم تحضر بنفسك. تعال بعد الساعة 2. وخلاص")).toBe(false);
+    expect(ok("الفرع زحمة الصبح؛ لازم تحضر بنفسك. تعال بعد الساعة 2. خد البطاقة.")).toBe(false);
+    expect(ok("نظرًا للزحمة تعال بعدين. لازم تحضر بنفسك. خد البطاقة معاك.")).toBe(false);
+  });
+});

@@ -39,7 +39,7 @@ export interface SynonymGroup {
   allow_echo?: boolean;
 }
 
-export const LEXICON_VERSION = "ar-syn-v1 (2026-10-13)";
+export const LEXICON_VERSION = "ar-syn-v2 (2026-10-14)";
 
 const REFUSAL: readonly Variant[] = [
   "لا يمكنني",
@@ -123,6 +123,18 @@ export const ARABIC_SYNONYMS: readonly SynonymGroup[] = Object.freeze([
     canon: ["معلمي"],
     variants: ["معلمة", "معلمن", "معلمنة", "بارامتري", "ذات معاملات", "ذات المعاملات", "بمعاملات منفصلة", "استعلامات مهيأة", "استعلام مهيأ", "الاستعلامات المهيأة", "الاستعلام المهيأ"],
     note: "Arabic renderings of parameterized query / prepared statement used in Arabic developer writing.",
+  },
+  {
+    canon: ["الامتداد"],
+    variants: ["امتداد", "تمتد", "يمتد"],
+    note:
+      "Legal extension of a lease (old-rent law): «امتداد العقد» and «العقد يمتد/تمتد العلاقة» state the same statutory extension; the definite article and noun/verb form do not change the meaning. Added after the live eg-legal-explainer design (2026-10-14) wrote «العقد يمتد لأفراد الأسرة».",
+  },
+  {
+    canon: ["مدة محددة"],
+    variants: ["المدة المحددة", "مدتها المحددة", "مدة معينة"],
+    note:
+      "A fixed lease term (new-rent law): definiteness («المدة المحددة»), a possessive («مدتها المحددة») or «معينة» for «محددة» all say the contract runs for a set period. «مدة» alone is NOT accepted (it does not say the term is fixed).",
   },
   {
     canon: ["undefined"],

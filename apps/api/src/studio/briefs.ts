@@ -1005,7 +1005,9 @@ export const STUDIO_BRIEFS: StudioBrief[] = [
         key: "short_sentences",
         task: "أعد كتابة الفقرة التالية في ثلاث جمل قصيرة، كل جملة تنتهي بنقطة، وبدون أي فاصلة منقوطة.",
         inputs: { text: "نظرًا لازدحام الفرع صباحًا، ولأن الخدمة تتطلب حضور صاحب الشأن شخصيًا، يُفضّل الحضور بعد الثانية ظهرًا مصطحبًا بطاقة الرقم القومي." },
-        pattern: "^[^;؛]*\\.[^;؛]*\\.[^;؛]*\\.",
+        // Exactly three sentences, each 8–80 characters ending in a full stop, nothing after the third, no semicolon.
+        // (The old pattern passed any text with three full stops anywhere, however long its sentences were.)
+        pattern: "^\\s*[^.;؛!?؟\\n]{8,80}\\.\\s*[^.;؛!?؟\\n]{8,80}\\.\\s*[^.;؛!?؟\\n]{8,80}\\.\\s*$",
         must_not: "نظرًا ل",
         good: "الفرع بيبقى زحمة الصبح. الخدمة محتاجة حضورك إنت شخصيًا. احضر بعد الساعة 2 الظهر ومعاك بطاقة الرقم القومي.",
         bad: "نظرًا لازدحام الفرع؛ يُفضّل الحضور بعد الثانية ظهرًا مصطحبًا البطاقة.",
