@@ -142,6 +142,10 @@ describe("eval synonyms (ar-syn-v3)", () => {
     expect(grade("data-to-chart", "wrong_chart", live.chartCand).pass).toBe(true);
     expect(grade("data-to-chart", "wrong_chart", live.chartStrong).pass).toBe(true);
     expect(grade("data-to-chart", "wrong_chart", live.chartWeak).pass).toBe(false);
+    // re-evaluation answers (2nd live round, 2026-10-15)
+    expect(grade("data-to-chart", "wrong_chart", "الرسم الدائري (Pie Chart) مش مناسب لـ 12 فئة علشان العين البشَرية بتواجه صعوبة كبيرة في مقارنة المساحات والزوايا المتقاربة. البديل: رسم الأعمدة (Bar Chart) مرتب تنازليًا.").pass).toBe(true);
+    expect(grade("data-to-chart", "wrong_chart", "لا يُناسب الرسم الدائري 12 فئة لأن كثرة الأجزاء تجعل المقارنة بين أحجامها بالعين المجردة صعبة للغاية. البديل الأنسب هو المخطط الشريط الأفقي (Horizontal Bar Chart).").pass).toBe(true);
+    expect(grade("data-to-chart", "wrong_chart", "الشريط الملون جميل، والمقارنة صعبة.").pass).toBe(false); // bare «شريط» is not a bar chart
     expect(grade("health-explainer", "explain_test", live.healthCand).pass).toBe(true);
     expect(grade("health-explainer", "explain_test", live.healthStrong).pass).toBe(true);
     expect(grade("health-explainer", "explain_test", live.healthWeak).pass).toBe(false);

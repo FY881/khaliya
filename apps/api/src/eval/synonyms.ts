@@ -171,9 +171,9 @@ export const ARABIC_SYNONYMS: readonly SynonymGroup[] = Object.freeze([
   },
   {
     canon: ["أعمدة"],
-    variants: ["شريطي", "المخطط الشريطي", "الرسم الشريطي", "مخطط شريطي", "رسم شريطي", "الأعمدة البيانية", "رسم عمودي", "مخطط عمودي", "الرسم العمودي", "المخطط العمودي", "عواميد"],
+    variants: ["شريطي", "المخطط الشريطي", "الرسم الشريطي", "مخطط شريطي", "رسم شريطي", "الأعمدة البيانية", "رسم عمودي", "مخطط عمودي", "الرسم العمودي", "المخطط العمودي", "عواميد", "مخطط شريط", "المخطط الشريط", "رسم شريط", "الرسم الشريط", "مخطط الأشرطة", "رسم الأشرطة", "أشرطة أفقية", "الأشرطة الأفقية"],
     note:
-      "Bar chart in Arabic: «أعمدة» and «مخطط/رسم شريطي» (and «عمودي») are the two standard Arabic renderings of bar chart. Added 2026-10-15: the live strong baseline wrote «المخطط الشريطي الأفقي». English «Bar Chart» alone still does not count (Arabic-first).",
+      "Bar chart in Arabic: «أعمدة» and «مخطط/رسم شريطي» (and «عمودي») are the two standard Arabic renderings of bar chart. Added 2026-10-15: the live strong baseline wrote «المخطط الشريطي الأفقي», and in the re-evaluation «المخطط الشريط الأفقي» (شريط/أشرطة = bar; only with مخطط/رسم or أفقية, never bare «شريط»). English «Bar Chart» alone still does not count (Arabic-first).",
   },
   {
     canon: ["صعب المقارنة"],
@@ -194,9 +194,11 @@ export const ARABIC_SYNONYMS: readonly SynonymGroup[] = Object.freeze([
       ["من الصعب", "المقارنة"],
       ["التمييز", "صعبا"],
       ["المقارنة", "صعبة"],
+      ["صعوبة", "مقارنة"],
+      ["صعوبة", "المقارنة"],
     ],
     note:
-      "Why a pie fails for many categories: comparing (or telling apart) slice sizes is hard. «من الصعب جدًا مقارنة أحجامها» (live strong) and «يجعل التمييز بين أحجام الشرائح أمرًا صعبًا» (live candidate) give exactly that reason; both failed only on the fixed spelling «صعب المقارنة». «الدائري ممتاز» stays forbidden.",
+      "Why a pie fails for many categories: comparing (or telling apart) slice sizes is hard. «من الصعب جدًا مقارنة أحجامها» (live strong) and «يجعل التمييز بين أحجام الشرائح أمرًا صعبًا» (live candidate) give exactly that reason; both failed only on the fixed spelling «صعب المقارنة». The re-evaluation candidate wrote «بتواجه صعوبة كبيرة في مقارنة المساحات», hence «صعوبة» + «مقارنة» anywhere in the answer. «الدائري ممتاز» stays forbidden.",
   },
   {
     canon: ["نسبة السكر"],
