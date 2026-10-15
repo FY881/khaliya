@@ -52,6 +52,8 @@ export interface ValidateOptions {
   weak?: SolverGenome;
   critic?: Genome;
   judges?: number;
+  /** Receives the baseline attempts (strong / weak / flake re-runs) even when nothing is persisted. */
+  collect?: ResultInput[];
 }
 
 export interface ValidationOutcome {
@@ -143,6 +145,7 @@ export async function validateItem(env: Env, lab: LabLLM, spec: ItemSpec, opts: 
     for (const g of gates) stages[g.gate] = { ok: g.pass, detail: g.reason, data: g.data };
     const report: ValidationReport = { at: Date.now(), outcome: status, reason, stages, quality: quality ?? undefined, llm_calls: lab.calls - callsAtStart };
     let item: EvalItem | null = null;
+    if (opts.collect) opts.collect.push(...pending);
     if (persist && itemId && !duplicateOf) {
       item = await insertItem(env, spec, {
         role,

@@ -9,7 +9,7 @@ import type { Env } from "../../src/env";
 import { HANDLERS } from "../../src/jobs/handlers";
 import { drainJob } from "../../src/jobs/runner";
 import { Registry } from "../../src/registry/registry";
-import { decidePromotion, emptyScore, MAX_REFINE_ROUNDS, MOCK_WEAK_CANDIDATE, mountStudioRoutes, STUDIO_BRIEFS, STUDIO_JOB_HANDLERS, toStored } from "../../src/studio";
+import { ANSWER_SNIPPET_CHARS, answerSnippet, decidePromotion, emptyScore, MAX_REFINE_ROUNDS, MOCK_WEAK_CANDIDATE, mountStudioRoutes, STUDIO_BRIEFS, STUDIO_JOB_HANDLERS, toStored } from "../../src/studio";
 import { freshState } from "../helpers";
 
 const E = env as Env;
@@ -32,6 +32,19 @@ describe("promotion rule", () => {
     expect(decidePromotion({ candidate: sc([7, 9], [1, 1]), strong: sc([9, 9], [0, 1]), weak: sc([0, 9], [0, 1]) }).reasons.join()).toMatch(/strong/);
     expect(decidePromotion({ candidate: sc([4, 4], [1, 1]), strong: sc([4, 4], [1, 1]), weak: sc([4, 4], [0, 1]) }).reasons.join()).toMatch(/weak/);
     expect(decidePromotion({ candidate: sc([4, 4], [0, 0]), strong: sc([4, 4], [0, 0]), weak: sc([0, 4], [0, 0]) }).promote).toBe(false);
+  });
+});
+
+describe("answer snippets", () => {
+  it("truncates and scrubs credential-looking strings", () => {
+    const long = "ا".repeat(ANSWER_SNIPPET_CHARS + 50);
+    const a = answerSnippet(long);
+    expect(a).toMatchObject({ truncated: true, chars: ANSWER_SNIPPET_CHARS + 50 });
+    expect(a.text.length).toBe(ANSWER_SNIPPET_CHARS + 1);
+    const k = "AIza" + "B".repeat(35);
+    expect(answerSnippet(`key ${k} end`).text).toBe("key [redacted] end");
+    expect(answerSnippet("ghp_" + "x".repeat(36)).text).toBe("[redacted]");
+    expect(answerSnippet(null)).toEqual({ text: "", truncated: false, chars: 0 });
   });
 });
 
@@ -129,6 +142,13 @@ describe("/api/studio + studio.design job (mock)", () => {
       expect(arms.candidate).toBe(arms.strong * (MAX_REFINE_ROUNDS + 1));
       expect(j.progress?.done ?? 0).toBeLessThanOrEqual(j.progress?.total ?? Infinity);
       expect((await E.DB.prepare("SELECT COUNT(*) AS n FROM service_versions").first<{ n: number }>())!.n).toBe(0);
+      // per-item answers are stored (truncated) in the owner-only report, one per (item × arm × round), with rounds
+      const ans = full.report.item_answers as any[];
+      expect(ans).toHaveLength(full.report.outcomes.length);
+      expect(ans.every((a) => typeof a.answer === "string" && a.answer.length <= ANSWER_SNIPPET_CHARS + 1 && typeof a.key === "string")).toBe(true);
+      expect(new Set(ans.filter((a) => a.arm === "candidate").map((a) => a.round))).toEqual(new Set(Array.from({ length: MAX_REFINE_ROUNDS + 1 }, (_, i) => i)));
+      expect(ans.filter((a) => a.arm !== "candidate").every((a) => a.round === 0)).toBe(true);
+      expect(ans.filter((a) => !a.pass).every((a) => a.detail === null || typeof a.detail === "string")).toBe(true);
 
       const r2 = await call("/api/studio/briefs/hijri-helper/design", { method: "POST" });
       const j2 = await drainJob(E, r2.json.job_id, 500);
@@ -143,4 +163,67 @@ describe("/api/studio + studio.design job (mock)", () => {
     },
     110_000,
   );
+});
+
+describe("studio re-evaluation + task validation (mock)", () => {
+  it(
+    "reeval keeps a promoted genome that still meets the gate and flags one that no longer does",
+    async () => {
+      expect((await call("/api/studio/reeval", { method: "POST", body: {} })).status).toBe(400);
+      const none = await call("/api/studio/reeval", { method: "POST", body: { brief_ids: ["hijri-helper"] } });
+      const j0 = await drainJob(E, none.json.job_id, 200);
+      expect((j0.result as any).failed).toEqual(["hijri-helper"]);
+
+      const d = await call("/api/studio/briefs/hijri-helper/design", { method: "POST" });
+      expect(((await drainJob(E, d.json.job_id, 500)).result as any).promoted).toEqual(["hijri-helper"]);
+      const svBefore = (await E.DB.prepare("SELECT COUNT(*) AS n FROM service_versions").first<{ n: number }>())!.n;
+
+      const r = await call("/api/studio/reeval", { method: "POST", body: { brief_ids: ["hijri-helper"] } });
+      expect(r.status).toBe(202);
+      const j = await drainJob(E, r.json.job_id, 500);
+      const res = j.result as any;
+      expect(res).toMatchObject({ mode: "reeval", kept: ["hijri-helper"], flagged: [] });
+      expect(res.results[0].reeval.verdict).toBe("kept");
+      expect(res.llm_calls).toBeLessThanOrEqual(60);
+      const promoted = (await call("/api/studio/designs?brief_id=hijri-helper&status=promoted")).json.designs;
+      const orig = promoted.find((x: any) => x.id === res.results[0].reeval.of_design);
+      expect(orig).toBeTruthy();
+      const re = (await call(`/api/studio/designs/${res.results[0].design_id}`)).json.design;
+      expect(re.genome_id).toBe(orig.genome_id); // same genome, no new architect draft
+      expect(re.report.kind).toBe("reeval");
+      expect(re.report.item_answers.length).toBe(re.report.outcomes.length);
+      expect((await E.DB.prepare("SELECT COUNT(*) AS n FROM service_versions").first<{ n: number }>())!.n).toBe(svBefore); // no new version
+
+      // make the promoted genome answer badly (as if the suite had become harder for it) → flagged, not kept
+      const row = await E.DB.prepare("SELECT report FROM studio_designs WHERE id = ?1").bind(orig.id).first<{ report: string }>();
+      const rep = JSON.parse(row!.report);
+      rep.genome.system_prompt += `\n${MOCK_WEAK_CANDIDATE}`;
+      await E.DB.prepare("UPDATE studio_designs SET report = ?2 WHERE id = ?1").bind(orig.id, JSON.stringify(rep)).run();
+      const r2 = await call("/api/studio/reeval", { method: "POST", body: { brief_ids: ["hijri-helper"] } });
+      const j2 = await drainJob(E, r2.json.job_id, 500);
+      const res2 = j2.result as any;
+      expect(res2).toMatchObject({ kept: [], flagged: ["hijri-helper"], rejected: ["hijri-helper"] });
+      expect(res2.results[0].reeval.of_design).toBe(orig.id); // a re-eval row is never itself re-evaluated
+      const flag = await E.DB.prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'studio.flag'").first<{ n: number }>().catch(() => null);
+      if (flag) expect(flag.n).toBeGreaterThanOrEqual(1);
+      const briefs = (await call("/api/studio/briefs")).json.briefs;
+      expect(briefs.find((b: any) => b.id === "hijri-helper").latest_design.status).toBe("rejected");
+    },
+    60_000,
+  );
+
+  it("validate-task runs the Eval Factory gates without storing the item", async () => {
+    expect((await call("/api/studio/briefs/nope/validate-task", { method: "POST", body: { key: "x" } })).status).toBe(404);
+    expect((await call("/api/studio/briefs/hijri-helper/validate-task", { method: "POST", body: { key: "nope" } })).status).toBe(404);
+    const before = (await E.DB.prepare("SELECT COUNT(*) AS n FROM eval_items").first<{ n: number }>())!.n;
+    const r = await call("/api/studio/briefs/hijri-helper/validate-task", { method: "POST", body: { key: "day_of_year", max_calls: 15 } });
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ brief_id: "hijri-helper", key: "day_of_year", status: expect.stringMatching(/active|reserve|rejected/) });
+    const gate = (g: string) => r.json.gates.find((x: any) => x.gate === g);
+    expect(gate("structure").pass).toBe(true);
+    expect(gate("solvable").pass).toBe(true);
+    expect(gate("anti_gaming").pass).toBe(true);
+    expect(r.json.llm_calls).toBeLessThanOrEqual(15);
+    expect((await E.DB.prepare("SELECT COUNT(*) AS n FROM eval_items").first<{ n: number }>())!.n).toBe(before);
+  });
 });

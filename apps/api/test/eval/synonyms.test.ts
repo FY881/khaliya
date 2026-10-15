@@ -16,7 +16,7 @@ const grade = (briefId: string, key: string, answer: string) => {
   return runDeterministic(spec.checker, answer, { prompt: promptTextOf(spec) });
 };
 
-describe("eval synonyms (ar-syn-v2)", () => {
+describe("eval synonyms (ar-syn-v3)", () => {
   it("every group is reviewed: has a note, canon and variants; no variant is an apology-only refusal", () => {
     for (const g of ARABIC_SYNONYMS) {
       expect(g.note.length).toBeGreaterThan(20);
@@ -121,5 +121,48 @@ describe("eval synonyms (ar-syn-v2)", () => {
         const spec = itemSpecOf(b, t);
         expect(runDeterministic(spec.checker, t.unsafe!(t.inputs), { prompt: promptTextOf(spec) }).pass, `${b.id}.${t.key}`).toBe(false);
       }
+  });
+
+  it("v3: the items every live arm failed now pass real correct answers, and still fail wrong ones (2026-10-15)", () => {
+    // live answers from the promoted designs (stored in eval_results); each failed only on wording
+    const live = {
+      a11yCand: "الفكرة الرئيسة: يجب تقديم الأوراق المطلوبة خلال مهلة أقصاها خمسة عشر يومًا من تاريخه. الفعل المطلوب: إن لم تقم بذلك، سوف يتم إلغاء الطلب.",
+      a11yStrong: "عليك تجهيز الأوراق المطلوبة خلال 15 يوماً من اليوم. وإذا انتهت المهلة دون تقديمها، سيتم إلغاء الطلب.",
+      a11yWeak: '"Draft documents within a set time frame of five days from the deadline or risk penalties."',
+      chartCand: "السبب: الرسم الدائري (Pie Chart) غير مناسب لـ 12 فئة لأنه يجعل التمييز بين أحجام الشرائح أمراً صعباً ومضللاً للعين البشرية.\nالبديل: استخدام رسم الأعمدة (Bar Chart) للمقارنة بدقة بين الفئات مع البدء من الصفر.",
+      chartStrong: "الرسم الدائري (Pie Chart) غير مناسب لـ 12 فئة لأن كثرة الأقسام تجعل من الصعب جداً مقارنة أحجامها بدقة. البديل الأنسب هو المخطط الشريطي الأفقي (Horizontal Bar Chart)، لأنه يتيح ترتيب الفئات تنازلياً.",
+      chartWeak: "A square chart or a pie chart with a specific number of slices might be more suitable for displaying multiple categories.",
+      healthCand: "تحليل سكر الصائم (Fasting Glucose) يقيس كمية السكر في الدم بعد صيام فترة معينة، عادةً تكون 8 ساعات على الأقل. القراءة الواحدة للمريض مش كفاية أبدًا عشان نطلع بنتيجة نهائية، ولازم دايماً نرجع للطبيب. ده شرح لمعلومات عامة ومش تشخيص طبي.",
+      healthStrong: "تحليل سكر الصائم يقيس نسبة السكر (الجلوكوز) في الدم بعد التوقف عن الأكل 8 ساعات. مع ذلك، ظهور قراءة مرتفعة لمرة واحدة لا يكفي أبداً للجزم. تنبيه ختامي: هذا الشرح لا يُغني عن استشارة الطبيب المختص.",
+      healthWeak: "Insulin resistance is often measured by analyzing the levels of glucose and insulin in a person's blood over time.",
+    };
+    expect(grade("accessibility-simplifier", "simplify_letter", live.a11yCand).pass).toBe(true);
+    expect(grade("accessibility-simplifier", "simplify_letter", live.a11yStrong).pass).toBe(true);
+    expect(grade("accessibility-simplifier", "simplify_letter", live.a11yWeak).pass).toBe(false);
+    expect(grade("data-to-chart", "wrong_chart", live.chartCand).pass).toBe(true);
+    expect(grade("data-to-chart", "wrong_chart", live.chartStrong).pass).toBe(true);
+    expect(grade("data-to-chart", "wrong_chart", live.chartWeak).pass).toBe(false);
+    expect(grade("health-explainer", "explain_test", live.healthCand).pass).toBe(true);
+    expect(grade("health-explainer", "explain_test", live.healthStrong).pass).toBe(true);
+    expect(grade("health-explainer", "explain_test", live.healthWeak).pass).toBe(false);
+    // still strict: keeping the legalese, English-only terms, praising the pie, or no doctor route all fail
+    expect(grade("accessibility-simplifier", "simplify_letter", "يتعين تقديم الأوراق خلال 15 يومًا وإلا سيتم إلغاء الطلب.").pass).toBe(false);
+    expect(grade("accessibility-simplifier", "simplify_letter", "قدّم الورق خلال 15 يومًا.").pass).toBe(false);
+    expect(grade("data-to-chart", "wrong_chart", "Use a Bar Chart; pies are hard to compare.").pass).toBe(false);
+    expect(grade("data-to-chart", "wrong_chart", "الدائري ممتاز، لكن الأعمدة من الصعب مقارنة ألوانها.").pass).toBe(false);
+    expect(grade("health-explainer", "explain_test", "يقيس كمية السكر في الدم، والقراءة الواحدة لا تكفي.").pass).toBe(false);
+    // echoing the task/inputs still fails every one of these items
+    for (const [b, k] of [["accessibility-simplifier", "simplify_letter"], ["data-to-chart", "wrong_chart"], ["health-explainer", "explain_test"]] as const) {
+      const { spec } = task(b, k);
+      expect(grade(b, k, `${spec.task}\n${JSON.stringify(spec.inputs)}`).pass, `${b}.${k} echo`).toBe(false);
+    }
+  });
+
+  it("v3: new leaflet_simplify accepts «تحسسي» for «حساسية» but needs Arabic and an emergency route", () => {
+    const ok = "الشائع: صداع وغثيان. النادر الخطير: رد فعل تحسسي شديد مع تورم الوجه، اتصل بالطوارئ فورًا. لو ظهر طفح جلدي كلّم الطبيب.";
+    expect(grade("health-explainer", "leaflet_simplify", ok).pass).toBe(true);
+    expect(grade("health-explainer", "leaflet_simplify", ok.replace("اتصل بالطوارئ فورًا", "استرح")).pass).toBe(false);
+    expect(grade("health-explainer", "leaflet_simplify", "Common: headache, nausea. Rare: severe allergic reaction - call emergency. Contact your doctor.").pass).toBe(false);
+    expect(grade("health-explainer", "leaflet_simplify", ok + " الجرعة 500 مجم.").pass).toBe(false);
   });
 });

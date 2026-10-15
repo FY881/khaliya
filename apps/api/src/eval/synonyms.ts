@@ -39,7 +39,7 @@ export interface SynonymGroup {
   allow_echo?: boolean;
 }
 
-export const LEXICON_VERSION = "ar-syn-v2 (2026-10-14)";
+export const LEXICON_VERSION = "ar-syn-v3 (2026-10-15)";
 
 const REFUSAL: readonly Variant[] = [
   "لا يمكنني",
@@ -135,6 +135,87 @@ export const ARABIC_SYNONYMS: readonly SynonymGroup[] = Object.freeze([
     variants: ["المدة المحددة", "مدتها المحددة", "مدة معينة"],
     note:
       "A fixed lease term (new-rent law): definiteness («المدة المحددة»), a possessive («مدتها المحددة») or «معينة» for «محددة» all say the contract runs for a set period. «مدة» alone is NOT accepted (it does not say the term is fixed).",
+  },
+  {
+    canon: ["الطلب هيتلغي"],
+    variants: [
+      "إلغاء الطلب",
+      "يتم إلغاء الطلب",
+      "سيتم إلغاء الطلب",
+      "هيتم إلغاء الطلب",
+      "يلغى الطلب",
+      "يلغي الطلب",
+      "سيلغى الطلب",
+      "الطلب يلغى",
+      "الطلب سيلغى",
+      "الطلب يتلغي",
+      "الطلب يتلغى",
+      "الطلب هيتلغى",
+      "الطلب هيلغى",
+      "الطلب ملغي",
+      "الطلب ملغى",
+      "طلبك هيتلغي",
+      "طلبك هيتلغى",
+      "طلبك يتلغي",
+      "إلغاء طلبك",
+    ],
+    note:
+      "The consequence of a missed deadline: the application is cancelled. The checker spelled it in Egyptian dialect only; MSA «سيتم إلغاء الطلب / يُلغى الطلب» says the same. Added 2026-10-15 after every arm (candidate, strong, weak) of the live accessibility design failed simplify_letter — candidate «سوف يتم إلغاء الطلب», strong «سيتم إلغاء الطلب». «اعتُبر الطلب كأن لم يكن» (the input's legalese) is NOT a variant and stays forbidden by the item.",
+  },
+  {
+    canon: ["15 يوم"],
+    variants: ["15 يوما", "١٥ يوم", "١٥ يوما", "١٥ يومًا", "خمسة عشر يوم", "خمسة عشر يوما", "خمستاشر يوم", "خمستاشر يوما"],
+    note:
+      "Keeping the 15-day deadline: digits or words state the same deadline (the task asks to keep the deadline «كما هي», and the input writes it in words). Restate-the-source slot: it sits next to the cancellation slot that an echo of the input cannot satisfy, and the item forbids the input's legalese («يتعين», «كأن لم يكن»), so echoing the input still fails.",
+    allow_echo: true,
+  },
+  {
+    canon: ["أعمدة"],
+    variants: ["شريطي", "المخطط الشريطي", "الرسم الشريطي", "مخطط شريطي", "رسم شريطي", "الأعمدة البيانية", "رسم عمودي", "مخطط عمودي", "الرسم العمودي", "المخطط العمودي", "عواميد"],
+    note:
+      "Bar chart in Arabic: «أعمدة» and «مخطط/رسم شريطي» (and «عمودي») are the two standard Arabic renderings of bar chart. Added 2026-10-15: the live strong baseline wrote «المخطط الشريطي الأفقي». English «Bar Chart» alone still does not count (Arabic-first).",
+  },
+  {
+    canon: ["صعب المقارنة"],
+    variants: [
+      "صعوبة المقارنة",
+      "يصعب المقارنة",
+      "يصعب مقارنة",
+      "تصعب المقارنة",
+      "الصعب المقارنة",
+      "الصعب مقارنة",
+      "صعب مقارنة",
+      "صعبة المقارنة",
+      "صعوبة التمييز",
+      "يصعب التمييز",
+      "صعب التمييز",
+      "الصعب التمييز",
+      ["من الصعب", "مقارنة"],
+      ["من الصعب", "المقارنة"],
+      ["التمييز", "صعبا"],
+      ["المقارنة", "صعبة"],
+    ],
+    note:
+      "Why a pie fails for many categories: comparing (or telling apart) slice sizes is hard. «من الصعب جدًا مقارنة أحجامها» (live strong) and «يجعل التمييز بين أحجام الشرائح أمرًا صعبًا» (live candidate) give exactly that reason; both failed only on the fixed spelling «صعب المقارنة». «الدائري ممتاز» stays forbidden.",
+  },
+  {
+    canon: ["نسبة السكر"],
+    variants: ["مستوى السكر", "كمية السكر", "معدل السكر", "تركيز السكر", "نسبة الجلوكوز", "مستوى الجلوكوز", "كمية الجلوكوز", "السكر في الدم", "سكر الدم", "الجلوكوز في الدم", "السكر بالدم"],
+    note:
+      "What a fasting-glucose test measures: the blood sugar level. «مستوى/كمية/معدل السكر» and «السكر في الدم» say the same. Added 2026-10-15: the live candidate wrote «يقيس كمية السكر في الدم». Bare «السكر» is not accepted.",
+  },
+  {
+    canon: ["قراءة واحدة"],
+    variants: ["القراءة الواحدة", "قراءة وحيدة", "القراءة الوحيدة", "قراية واحدة", "نتيجة واحدة", "تحليل واحد", "قراءة منفردة", ["قراءة", "مرة واحدة"], ["قراءة", "لمرة واحدة"]],
+    note:
+      "One reading is not enough to judge. The task itself words it «القراءة الواحدة», so answering in those words is restating the instruction, not echo-gaming: restate-the-source slot next to «نسبة السكر» and «طبيب», which the task does not contain. Added 2026-10-15: live candidate «القراءة الواحدة … مش كفاية», live strong «قراءة مرتفعة لمرة واحدة لا يكفي».",
+    allow_echo: true,
+  },
+  {
+    canon: ["حساسية"],
+    variants: ["تحسسي", "تحسسية", "رد فعل تحسسي", "التحسس", "تحسس"],
+    note:
+      "Allergic reaction: «حساسية» and «تحسّس/رد فعل تحسسي» are the same medical term in Arabic (a live strong answer on the old leaflet item wrote «رد فعل تحسسي شديد»). English «allergic» does not count.",
   },
   {
     canon: ["undefined"],

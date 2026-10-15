@@ -18,13 +18,15 @@ import { architect, lineageOf, refine, STUDIO_ACTOR } from "./architect";
 import { failureClass, MAX_REFINE_ROUNDS, type FailureClass, type RefineFailure } from "./craft";
 import { getItem } from "../eval/store";
 import { suiteIdOf } from "./briefs";
-import { addOutcome, admitTask, ARMS, armGenome, decidePromotion, emptyScore, ensureStudioSuite, evalUnit, promoteDesign, type Admission, type Arm } from "./run";
-import { createDesign, getDesign, listBriefRows, loadBrief, updateDesign } from "./store";
+import { addOutcome, admitTask, ARMS, armGenome, decidePromotion, designItemAnswers, emptyScore, ensureStudioSuite, evalUnit, promoteDesign, type Admission, type Arm } from "./run";
+import { createDesign, getDesign, listBriefRows, listDesigns, loadBrief, updateDesign } from "./store";
 import type { ArmScore, DesignStatus, TaskKind } from "./types";
 
 export const STUDIO_DESIGN_KIND = "studio.design";
 export const STUDIO_CALLS_PER_BRIEF = 90;
 export const MAX_STUDIO_CALLS = 1500;
+/** Ceiling for re-evaluating one promoted design against its (updated) suite: no architect, no refinement. */
+export const STUDIO_REEVAL_CALLS_PER_BRIEF = 60;
 
 export class StudioJobError extends Error {
   constructor(
@@ -66,6 +68,8 @@ export interface StudioResult {
   weak?: { cap_rate: number; safety_rate: number };
   /** Refinement rounds used (0 = the first design decided). */
   rounds?: number;
+  /** reeval mode: the promoted design re-evaluated, and whether it still meets the gate. */
+  reeval?: { of_design: string; verdict: "kept" | "flagged" };
 }
 
 export interface StudioJobState {
@@ -77,6 +81,12 @@ export interface StudioJobState {
   llm_calls: number;
   /** Units added by refinement rounds (progress total grows when a round starts). */
   extra_units?: number;
+  /**
+   * "reeval": re-run the brief's CURRENT suite on its latest promoted genome (no architect, no refinement, no new
+   * genome or service version). If the promoted genome no longer meets the promotion rule it is FLAGGED: the new
+   * design row is 'rejected' with report.reeval.flagged, and a studio.flag audit event names it. Never silently kept.
+   */
+  mode?: "design" | "reeval";
 }
 
 const unitsOf = (tasks: number) => 1 + tasks + tasks * ARMS.length + 1;
@@ -86,7 +96,11 @@ function newCursor(briefId: string, callsAtStart = 0): DesignCursor {
 }
 
 /** Build the initial cursor for some briefs (default: every brief, seeds first). */
-export async function studioDesignInit(env: Env, briefIds?: string[]): Promise<{ state: StudioJobState; total: number; max_calls: number; params: { brief_ids: string[] } }> {
+export async function studioDesignInit(
+  env: Env,
+  briefIds?: string[],
+  opts: { mode?: "design" | "reeval" } = {},
+): Promise<{ state: StudioJobState; total: number; max_calls: number; params: { brief_ids: string[]; mode?: "reeval" } }> {
   const rows = await listBriefRows(env);
   const ids = briefIds?.length ? [...new Set(briefIds)] : rows.map((r) => r.id);
   const counts: number[] = [];
@@ -96,8 +110,10 @@ export async function studioDesignInit(env: Env, briefIds?: string[]): Promise<{
     counts.push(r.spec.tasks.length);
   }
   if (!ids.length) throw new StudioJobError("bad_request", "no briefs to design");
-  const state: StudioJobState = { brief_ids: ids, task_counts: counts, bi: 0, cur: null, results: [], llm_calls: 0 };
-  return { state, total: totalOf(state), max_calls: Math.min(MAX_STUDIO_CALLS, STUDIO_CALLS_PER_BRIEF * ids.length), params: { brief_ids: ids } };
+  const reeval = opts.mode === "reeval";
+  const state: StudioJobState = { brief_ids: ids, task_counts: counts, bi: 0, cur: null, results: [], llm_calls: 0, ...(reeval ? { mode: "reeval" as const } : {}) };
+  const perBrief = reeval ? STUDIO_REEVAL_CALLS_PER_BRIEF : STUDIO_CALLS_PER_BRIEF;
+  return { state, total: totalOf(state), max_calls: Math.min(MAX_STUDIO_CALLS, perBrief * ids.length), params: { brief_ids: ids, ...(reeval ? { mode: "reeval" as const } : {}) } };
 }
 
 function totalOf(s: StudioJobState): number {
@@ -129,6 +145,18 @@ async function finishBrief(s: StudioJobState, r: StudioResult): Promise<void> {
   s.cur = null;
 }
 
+/** Candidate genome id → refinement round, from the cursor (history + current round). */
+function candidateRounds(c: DesignCursor): Record<string, number> {
+  const m: Record<string, number> = {};
+  for (const h of c.history ?? []) if (h.genome_id) m[h.genome_id] = h.round;
+  if (c.genome_id) m[c.genome_id] = c.round ?? 0;
+  return m;
+}
+
+async function itemAnswersOf(env: Env, c: DesignCursor) {
+  return c.design_id ? designItemAnswers(env, c.design_id, c.items, candidateRounds(c)) : [];
+}
+
 async function designReport(env: Env, id: string): Promise<Record<string, any>> {
   return ((await getDesign(env, id))?.report as Record<string, any>) ?? {};
 }
@@ -145,6 +173,22 @@ export const studioDesignJob: JobHandler<StudioJobState> = {
       if (!brief) {
         await finishBrief(s, { brief_id: c.brief_id, design_id: c.design_id, status: "failed", reasons: ["brief not found"] });
         return { message: `${c.brief_id}: brief not found` };
+      }
+
+      if (c.phase === "architect" && s.mode === "reeval") {
+        const prev = (await listDesigns(env, { brief_id: brief.id, status: "promoted", limit: 20 })).find((x) => !(x.report as any)?.reeval && (x.report as any)?.genome);
+        if (!prev) {
+          await finishBrief(s, { brief_id: brief.id, design_id: null, status: "failed", reasons: ["reeval: no promoted design to re-evaluate"] });
+          return { message: `${brief.id}: no promoted design to re-evaluate` };
+        }
+        const d = c.design_id ? (await getDesign(env, c.design_id))! : await createDesign(env, { brief_id: brief.id, lineage_id: lineageOf(brief.id), job_id: job.id });
+        c.design_id = d.id;
+        c.genome_id = prev.genome_id;
+        const pr = prev.report as Record<string, any>;
+        const report = { kind: "reeval", reeval: { of_design: prev.id, of_version: prev.version, previous_decision: pr.decision ?? null }, genome: pr.genome, architect: { source: "reeval", note: `re-evaluation of promoted design ${prev.id}` } };
+        await updateDesign(env, d.id, { genome_id: prev.genome_id, suite_id: suiteIdOf(brief.id), report });
+        c.phase = "suite";
+        return { message: `${brief.id}: re-evaluating promoted design ${prev.id} (v${prev.version})` };
       }
 
       if (c.phase === "architect") {
@@ -221,7 +265,7 @@ export const studioDesignJob: JobHandler<StudioJobState> = {
         const r = await refine(brief, report.genome as GenomeInput, failures, lab, { round, version: (report.genome as GenomeInput)?.version ?? 1 });
         if (!r.check.ok) {
           const decision = decidePromotion(c.scores);
-          const full = { ...report, scores: c.scores, outcomes: c.outcomes, decision, refine_failed: { round, errors: r.check.errors } };
+          const full = { ...report, scores: c.scores, outcomes: c.outcomes, decision, refine_failed: { round, errors: r.check.errors }, item_answers: await itemAnswersOf(env, c) };
           await updateDesign(env, c.design_id!, { status: "rejected", report: full });
           await audit(env.DB, STUDIO_ACTOR, "studio.reject", c.design_id, { brief: brief.id, reasons: decision.reasons, refine_errors: r.check.errors });
           await finishBrief(s, { brief_id: brief.id, design_id: c.design_id, status: "rejected", genome_id: c.genome_id, reasons: [...decision.reasons, ...r.check.errors.map((e) => `refine r${round}: ${e}`)], candidate: decision.candidate, strong: decision.strong, weak: decision.weak, rounds: round - 1 });
@@ -240,6 +284,18 @@ export const studioDesignJob: JobHandler<StudioJobState> = {
 
       // decide
       const decision = decidePromotion(c.scores);
+      if (s.mode === "reeval") {
+        const report = await designReport(env, c.design_id!);
+        const of = String(report.reeval?.of_design ?? "");
+        const verdict: "kept" | "flagged" = decision.promote ? "kept" : "flagged";
+        const full = { ...report, scores: c.scores, outcomes: c.outcomes, decision, rounds: 0, item_answers: await itemAnswersOf(env, c), reeval: { ...(report.reeval ?? {}), verdict, flagged: !decision.promote, at: Date.now() } };
+        // kept: the promoted genome still meets the gate on the updated suite (no new genome / service version).
+        // flagged: it does not; the row is 'rejected' so the briefs list shows it, and the owner sees a studio.flag.
+        await updateDesign(env, c.design_id!, { status: decision.promote ? "promoted" : "rejected", report: full, ...(decision.promote ? { promoted_at: Date.now() } : {}) });
+        await audit(env.DB, STUDIO_ACTOR, decision.promote ? "studio.reeval" : "studio.flag", c.design_id, { brief: brief.id, of_design: of, genome: c.genome_id, verdict, reasons: decision.reasons, candidate: decision.candidate, strong: decision.strong, weak: decision.weak });
+        await finishBrief(s, { brief_id: brief.id, design_id: c.design_id, status: decision.promote ? "promoted" : "rejected", genome_id: c.genome_id, reasons: decision.reasons, candidate: decision.candidate, strong: decision.strong, weak: decision.weak, rounds: 0, reeval: { of_design: of, verdict } });
+        return { message: `${brief.id}: re-eval ${verdict.toUpperCase()} (capability ${decision.candidate.cap_rate}, safety ${decision.candidate.safety_rate})` };
+      }
       if (!decision.promote) {
         const round = c.round ?? 0;
         const candFails = c.outcomes.some((o) => o.arm === "candidate" && !o.pass && (o.round ?? 0) === round);
@@ -253,7 +309,7 @@ export const studioDesignJob: JobHandler<StudioJobState> = {
         }
       }
       const report = await designReport(env, c.design_id!);
-      const full = { ...report, scores: c.scores, outcomes: c.outcomes, decision, history: c.history ?? [], rounds: c.round ?? 0 };
+      const full = { ...report, scores: c.scores, outcomes: c.outcomes, decision, history: c.history ?? [], rounds: c.round ?? 0, item_answers: await itemAnswersOf(env, c) };
       if (decision.promote && report.genome) {
         const p = await promoteDesign(env, { design_id: c.design_id!, brief, genome: report.genome as GenomeInput, decision, report: full });
         await finishBrief(s, { brief_id: brief.id, design_id: c.design_id, status: "promoted", genome_id: p.genome_id, service_version: p.service_version, reasons: decision.reasons, candidate: decision.candidate, strong: decision.strong, weak: decision.weak, rounds: c.round ?? 0 });
@@ -278,6 +334,7 @@ export const studioDesignJob: JobHandler<StudioJobState> = {
     promoted: s.results.filter((r) => r.status === "promoted").map((r) => r.brief_id),
     rejected: s.results.filter((r) => r.status === "rejected").map((r) => r.brief_id),
     failed: s.results.filter((r) => r.status === "failed").map((r) => r.brief_id),
+    ...(s.mode === "reeval" ? { mode: "reeval", kept: s.results.filter((r) => r.reeval?.verdict === "kept").map((r) => r.brief_id), flagged: s.results.filter((r) => r.reeval?.verdict === "flagged").map((r) => r.brief_id) } : {}),
     current: s.cur ? { brief_id: s.cur.brief_id, design_id: s.cur.design_id, phase: s.cur.phase } : null,
     results: s.results,
     llm_calls: s.llm_calls,

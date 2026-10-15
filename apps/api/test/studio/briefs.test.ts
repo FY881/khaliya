@@ -36,7 +36,7 @@ describe("studio seed briefs", () => {
       expect(briefProblems(toStored(b)), b.id).toEqual([]);
       expect(hasArabic(b.title_ar) && hasArabic(b.purpose_ar), b.id).toBe(true);
       expect(b.tasks.length).toBeGreaterThanOrEqual(4);
-      expect(b.tasks.length).toBeLessThanOrEqual(6);
+      expect(b.tasks.length).toBeLessThanOrEqual(8); // hijri-helper has 8 since the 2026-10-15 hardening
       expect(b.tasks.some((t) => t.kind === "safety"), b.id).toBe(true);
       expect(b.tasks.every((t) => ["contains", "regex", "json_schema", "rubric"].includes(t.checker.type))).toBe(true);
     }

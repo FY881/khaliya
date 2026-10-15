@@ -200,6 +200,75 @@ export async function evalUnit(env: Env, lab: LabLLM, arm: Arm, genome: SolverGe
   return { pass: o.verdict.pass, score: o.verdict.score, tokens: o.tokens, detail: o.verdict.detail, checker_type: item.checker.type };
 }
 
+// ---------------------------------------------------------------- per-item answers (owner-only diagnostics)
+
+/** Max characters of each stored answer snippet in a design report. */
+export const ANSWER_SNIPPET_CHARS = 600;
+const SECRETISH = /\b(sk-[A-Za-z0-9_-]{20,}|sk-or-[0-9A-Za-z_-]{10,}|AIza[0-9A-Za-z_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abp]-[A-Za-z0-9-]{20,})\b|-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
+
+/** Truncate an answer for the report and blank anything that looks like a credential. */
+export function answerSnippet(s: unknown, max = ANSWER_SNIPPET_CHARS): { text: string; truncated: boolean; chars: number } {
+  const full = String(s ?? "").replace(SECRETISH, "[redacted]");
+  return { text: full.length > max ? full.slice(0, max) + "…" : full, truncated: full.length > max, chars: full.length };
+}
+
+export interface ItemAnswer {
+  key: string;
+  kind: TaskKind;
+  arm: Arm;
+  /** Refinement round of the candidate genome (0 = first design); baselines are always 0. */
+  round: number;
+  pass: boolean;
+  score: number;
+  detail: string | null;
+  answer: string;
+  truncated: boolean;
+  chars: number;
+}
+
+/**
+ * Per-item answers of a design (from eval_results ref = design id), truncated and credential-scrubbed. Stored in the
+ * design report, which only the owner-gated /api/studio/designs/:id route returns; never in audit, hive or services.
+ */
+export async function designItemAnswers(
+  env: Env,
+  designId: string,
+  items: { key: string; kind: TaskKind; item_id: string }[],
+  candidateRounds: Record<string, number>,
+): Promise<ItemAnswer[]> {
+  const byItem = new Map(items.map((i) => [i.item_id, i]));
+  const rows = (
+    await env.DB.prepare("SELECT item_id, genome_id, pass, score, answer, judge FROM eval_results WHERE ref = ?1 AND context = 'sandbox' ORDER BY at, id LIMIT 400")
+      .bind(designId)
+      .all<{ item_id: string; genome_id: string; pass: number; score: number; answer: string | null; judge: string | null }>()
+      .catch(() => ({ results: [] as never[] }))
+  ).results;
+  const out: ItemAnswer[] = [];
+  for (const r of rows) {
+    const it = byItem.get(r.item_id);
+    if (!it) continue;
+    let j: { arm?: string; detail?: string } = {};
+    try {
+      j = JSON.parse(r.judge ?? "{}") ?? {};
+    } catch {}
+    const arm = (ARMS as readonly string[]).includes(String(j.arm)) ? (j.arm as Arm) : "candidate";
+    const snip = answerSnippet(r.answer);
+    out.push({
+      key: it.key,
+      kind: it.kind,
+      arm,
+      round: arm === "candidate" ? candidateRounds[r.genome_id] ?? 0 : 0,
+      pass: r.pass === 1,
+      score: r.score,
+      detail: j.detail ? answerSnippet(j.detail, 300).text : null,
+      answer: snip.text,
+      truncated: snip.truncated,
+      chars: snip.chars,
+    });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- decision
 
 const rate = (p: number, n: number) => (n ? Math.round((p / n) * 1000) / 1000 : 0);
