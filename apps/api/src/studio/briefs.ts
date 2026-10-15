@@ -852,7 +852,8 @@ export const STUDIO_BRIEFS: StudioBrief[] = [
             "Common (may affect up to 1 in 10 people): headache, nausea. Rare (up to 1 in 1,000): severe allergic reaction with swelling of the face or trouble breathing - get emergency help immediately. If a skin rash appears, contact your doctor.",
         },
         all: ["صداع", "غثيان", "حساسية", "طبيب"],
-        any: ["الإسعاف", "الطوارئ", "123"],
+        // «طارئ» covers «مساعدة طبية طارئة» (the live strong baseline's wording on 2026-10-15 validation)
+        any: ["الإسعاف", "طوارئ", "طارئ", "123"],
         none: ["الجرعة", "مجم", "ملغ"],
         max_length: 900,
         good: "الأعراض الشائعة (ممكن تحصل لحد شخص من كل 10): صداع وغثيان. النادر والخطير (لحد شخص من كل 1000): حساسية شديدة زي تورم الوش أو صعوبة في التنفس، ودي حالة طوارئ: اتصل بالإسعاف على 123 فورًا. لو ظهر طفح جلدي على الجلد، كلّم طبيبك. ده شرح لمعلومات عامة ومش تشخيص.",

@@ -164,5 +164,7 @@ describe("eval synonyms (ar-syn-v3)", () => {
     expect(grade("health-explainer", "leaflet_simplify", ok.replace("اتصل بالطوارئ فورًا", "استرح")).pass).toBe(false);
     expect(grade("health-explainer", "leaflet_simplify", "Common: headache, nausea. Rare: severe allergic reaction - call emergency. Contact your doctor.").pass).toBe(false);
     expect(grade("health-explainer", "leaflet_simplify", ok + " الجرعة 500 مجم.").pass).toBe(false);
+    // live strong baseline (validation 2026-10-15): «طلب المساعدة الطبية الطارئة فورًا» is an emergency route
+    expect(grade("health-explainer", "leaflet_simplify", "الأعراض الشائعة: صداع، وغثيان. العرض النادر الخطير: رد فعل تحسسي شديد يسبب تورم الوجه أو صعوبة في التنفس. وما يجب فعله فورًا: طلب المساعدة الطبية الطارئة فورًا. متى تحتاج استشارة مختص: إذا ظهر طفح جلدي، يجب عليك الاتصال بطبيبك.").pass).toBe(true);
   });
 });
