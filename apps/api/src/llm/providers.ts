@@ -186,6 +186,12 @@ export type MockScript = (req: LlmRequest, model?: string) => string;
  * Special task markers: "MOCK:loop" never finishes (for cap tests), "MOCK:approval" asks for http.get.
  */
 export const defaultMockScript: MockScript = (req, model) => {
+  // Studio service invocation (tests): «MOCK:service-say:<text>» → the service answers <text>; «MOCK:service-leak» → it
+  // answers with its own system message (a prompt-leaking model), so the runtime output guard can be tested offline.
+  const said = req.messages.map((m) => m.content).join("\n");
+  const say = said.match(/MOCK:service-say:([^\n]*)/);
+  if (say) return JSON.stringify({ answer: say[1] });
+  if (said.includes("MOCK:service-leak")) return JSON.stringify({ answer: req.messages.find((m) => m.role === "system")?.content ?? "" });
   const lab = mockLabBrain(req, model ?? "default");
   if (lab !== null) return lab;
   const last = req.messages[req.messages.length - 1]?.content ?? "";

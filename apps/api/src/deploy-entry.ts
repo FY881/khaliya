@@ -5,12 +5,9 @@ import type { Env } from "./env";
 export { AgentHome } from "./home/AgentHome";
 export { JobRunner } from "./jobs/runner";
 
-const SEC = {
-  "X-Frame-Options": "DENY",
-  "X-Content-Type-Options": "nosniff",
-  "Referrer-Policy": "no-referrer",
-  "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-};
+import { CONSOLE_HEADERS } from "./security";
+
+const SEC = CONSOLE_HEADERS;
 const embedded = {
   async fetch(req: Request): Promise<Response> {
     const p = new URL(req.url).pathname;

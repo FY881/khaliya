@@ -31,7 +31,7 @@
  */
 import { Hono, type Context, type Next } from "hono";
 import { getCookie } from "hono/cookie";
-import { authConfigured, checkOwnerCode, sessionEpoch } from "../auth/owner";
+import { authConfigured, checkOwnerCode, clientIp, sessionEpoch } from "../auth/owner";
 import { COOKIE_NAME, verifySession } from "../auth/session";
 import type { Env } from "../env";
 import { listArmyAudit, verifyChain } from "./audit";
@@ -80,7 +80,7 @@ const wrap = (fn: (c: Context<R>) => Promise<Response>) => async (c: Context<R>)
 /** Optional step-up: a fresh TOTP in body.code. Returns true/false, or a Response on a bad code. */
 async function stepUp(c: Context<R>, code: unknown): Promise<boolean | Response> {
   if (code === undefined || code === null || code === "") return false;
-  const r = await checkOwnerCode(c.env, String(code), "step_up");
+  const r = await checkOwnerCode(c.env, String(code), "step_up", Date.now(), { ip: clientIp(c.req.raw) });
   if (!r.ok) return c.json({ error: r.error, code: "step_up_failed" }, r.status);
   return true;
 }

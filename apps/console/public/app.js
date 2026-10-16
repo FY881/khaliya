@@ -1161,8 +1161,10 @@ async function route() {
   } catch (e) {
     if (e instanceof AuthError) return renderLogin();
     const c = document.getElementById("content");
-    if (c) c.innerHTML = `<div class="card empty"><div>${t("error")}: ${esc(e.message)}</div><button class="btn sm" style="margin-top:10px" onclick="location.reload()">${t("refresh")}</button></div>`;
-    else toast(e.message, true);
+    if (c) {
+      c.innerHTML = `<div class="card empty"><div>${t("error")}: ${esc(e.message)}</div><button class="btn sm" style="margin-top:10px" id="errReload" type="button">${t("refresh")}</button></div>`;
+      document.getElementById("errReload")?.addEventListener("click", () => location.reload());
+    } else toast(e.message, true);
   }
 }
 window.addEventListener("hashchange", route);

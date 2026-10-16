@@ -13,6 +13,9 @@
  *   POST /api/studio/briefs/:id/validate-task {key, max_calls≤15} → Eval Factory validation of one task, not stored
  *   GET  /api/studio/designs                ?brief_id=&status=&limit= → {designs: [summary…]}
  *   GET  /api/studio/designs/:id            → {design: {…summary, report}} | 404
+ *   POST /api/studio/services/:slug/invoke  {request, document?, runtime?: "hardened"|"legacy", version?} → one guarded
+ *                                           service reply (1 lab call). Owner-only like everything here; services are
+ *                                           not public (services_public=false on /api/health).
  */
 import { Hono } from "hono";
 import { audit } from "../audit";
@@ -28,6 +31,7 @@ import { LAB_SHARE } from "../eval/routes";
 import { validateItem } from "../eval/validate";
 import type { ResultInput } from "../eval/store";
 import type { DesignRow, StoredBrief } from "./types";
+import { invokeService, resolveService, ServiceError, SERVICE_RUNTIMES, type ServiceRuntime } from "./service";
 
 type R = { Bindings: Env };
 export const studioRoutes = new Hono<R>();
@@ -186,6 +190,31 @@ studioRoutes.get("/designs/:id", async (c) => {
   const d = await getDesign(c.env, c.req.param("id"));
   if (!d) return c.json({ error: "not found" }, 404);
   return c.json({ design: designView(d, true) });
+});
+
+studioRoutes.post("/services/:slug/invoke", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { request?: unknown; document?: unknown; runtime?: unknown; version?: unknown } | null;
+  if (!body || typeof body !== "object") return c.json({ error: "JSON body required" }, 400);
+  const runtime = (body.runtime ?? "hardened") as ServiceRuntime;
+  if (!SERVICE_RUNTIMES.includes(runtime)) return c.json({ error: `runtime must be one of ${SERVICE_RUNTIMES.join(", ")}` }, 400);
+  const version = body.version === undefined ? undefined : Math.floor(Number(body.version));
+  if (version !== undefined && !(version >= 1)) return c.json({ error: "version must be a positive integer" }, 400);
+  const target = await resolveService(c.env, c.req.param("slug"), version);
+  if (!target) return c.json({ error: "service not found" }, 404);
+  const lab = new LabLLM(c.env, { maxCalls: 1, share: LAB_SHARE });
+  try {
+    const reply = await invokeService(c.env, lab, target, { request: body.request as string, document: body.document as string | undefined }, { runtime });
+    await audit(c.env.DB, "owner", "studio.service.invoke", `${target.slug}@${target.version}`, {
+      runtime,
+      guard: (reply.guard ?? reply.guard_preview)?.actions.map((a) => a.kind) ?? [],
+      blocked: reply.guard?.blocked ?? false,
+      input_flags: reply.input_flags.length,
+    });
+    return c.json({ reply });
+  } catch (e) {
+    if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.code === "not_found" ? 404 : 400);
+    throw e;
+  }
 });
 
 export function mountStudioRoutes(app: { route: (path: string, r: Hono<any>) => unknown }): void {

@@ -6,7 +6,9 @@ import { CONSTITUTION, STATUSES, type AgentStatus } from "./constitution";
 import type { Env, JobMessage } from "./env";
 import { audit, listAudit, verifyAuditChain } from "./audit";
 import { ApprovalError, decideApproval, listApprovals } from "./approvals";
-import { authConfigured, checkOwnerCode, sessionEpoch } from "./auth/owner";
+import { authConfigured, checkOwnerCode, clientIp, sessionEpoch } from "./auth/owner";
+import { bodyLimit } from "hono/body-limit";
+import { API_HEADERS, bodyLimitFor, CONSOLE_HEADERS, withHeaders } from "./security";
 import { COOKIE_NAME, clearCookieHeader, cookieHeader, signSession, verifySession } from "./auth/session";
 import { Governor, GovernorError } from "./governor/governor";
 import { FREE_TIER } from "./governor/quotas";
@@ -58,12 +60,16 @@ app.use("/api/*", async (c, next) => {
   return cors({ origin, credentials: true, allowHeaders: ["content-type", "x-khaliya"], allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] })(c, next);
 });
 
-// ---------- security headers ----------
+// ---------- security headers (restrictive defaults on every API response) ----------
 app.use("/api/*", async (c, next) => {
   await next();
-  c.header("cache-control", "no-store");
-  c.header("x-content-type-options", "nosniff");
-  c.header("referrer-policy", "no-referrer");
+  for (const [k, v] of Object.entries(API_HEADERS)) c.header(k, v);
+});
+
+// ---------- request body cap (413) ----------
+app.use("/api/*", async (c, next) => {
+  if (c.req.method === "GET" || c.req.method === "HEAD" || c.req.method === "OPTIONS") return next();
+  return bodyLimit({ maxSize: bodyLimitFor(c.req.path), onError: (cc) => cc.json({ error: "payload too large", max_bytes: bodyLimitFor(c.req.path) }, 413) })(c, next);
 });
 
 // ---------- errors ----------
@@ -87,11 +93,12 @@ app.onError((err, c) => {
 });
 
 // ---------- public ----------
-app.get("/api/health", (c) => c.json({ ok: true, app: c.env.APP_NAME ?? "Khaliya", auth_configured: authConfigured(c.env), time: Date.now() }));
+// services_public: Studio services answer only the owner (/api/studio/services/:slug/invoke); no public service route exists.
+app.get("/api/health", (c) => c.json({ ok: true, app: c.env.APP_NAME ?? "Khaliya", auth_configured: authConfigured(c.env), services_public: false, time: Date.now() }));
 
 app.post("/api/auth/login", async (c) => {
   const body = await c.req.json<{ code?: string }>().catch(() => ({}) as { code?: string });
-  const r = await checkOwnerCode(c.env, String(body.code ?? ""), "login");
+  const r = await checkOwnerCode(c.env, String(body.code ?? ""), "login", Date.now(), { ip: clientIp(c.req.raw) });
   if (!r.ok) return c.json({ error: r.error }, r.status);
   const token = await signSession(c.env.SESSION_SECRET!, await sessionEpoch(c.env));
   c.header("set-cookie", cookieHeader(token, crossSite(c.env)));
@@ -275,7 +282,7 @@ app.post("/api/approvals/:id/:decision{approve|reject}", async (c) => {
   const decision = c.req.param("decision") as "approve" | "reject";
   let stepUpOk = false;
   if (decision === "approve" && body.code) {
-    const r = await checkOwnerCode(c.env, String(body.code), "step_up");
+    const r = await checkOwnerCode(c.env, String(body.code), "step_up", Date.now(), { ip: clientIp(c.req.raw) });
     if (!r.ok) return c.json({ error: r.error }, r.status);
     stepUpOk = true;
   }
@@ -362,7 +369,7 @@ mountArmyRoutes(app); // /api/army/*
 app.all("/api/*", (c) => c.json({ error: "not found" }, 404));
 
 // Non-API paths: the console (static assets). With run_worker_first=["/api/*"] these rarely reach the Worker.
-app.all("*", async (c) => (c.env.ASSETS ? c.env.ASSETS.fetch(c.req.raw) : c.text("Khaliya API", 200)));
+app.all("*", async (c) => withHeaders(c.env.ASSETS ? await c.env.ASSETS.fetch(c.req.raw) : c.text("Khaliya API", 200), CONSOLE_HEADERS));
 
 // ---------- scheduled + queue ----------
 export async function healthTick(env: Env) {
