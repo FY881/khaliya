@@ -20,6 +20,7 @@ import { discoveryEvolveJob, discoveryReverifyJob } from "../discovery/jobs";
 import { redteamCampaignJob } from "../redteam/jobs";
 import { P5_JOB_HANDLERS } from "../court/handlers";
 import { STUDIO_JOB_HANDLERS } from "../studio/jobs";
+import { SERVICE_REDTEAM_HANDLERS } from "../redteam/services/campaign";
 // ARMY_JOB_HANDLERS (army.mission) is NOT imported here: army/swarm.ts -> jobs/routes.ts -> this file is a cycle.
 // It is registered after declaration via Object.assign in src/index.ts (and idempotently by registerArmyJobs()).
 
@@ -191,4 +192,5 @@ export const HANDLERS: Record<string, JobHandler> = {
   [redteamCampaignJob.kind]: redteamCampaignJob,
   ...P5_JOB_HANDLERS,
   ...STUDIO_JOB_HANDLERS,
+  ...SERVICE_REDTEAM_HANDLERS,
 };

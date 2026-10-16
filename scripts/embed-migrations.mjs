@@ -3,7 +3,7 @@
 // Only additive, idempotent migrations (CREATE ... IF NOT EXISTS) belong here. Run: node scripts/embed-migrations.mjs
 import { readFileSync, writeFileSync } from "node:fs";
 const dir = new URL("../apps/api/migrations/", import.meta.url);
-const names = ["0004_forge.sql", "0005_discovery.sql", "0006_redteam.sql", "0007_memory_court.sql", "0008_studio_services.sql", "0009_army.sql"];
+const names = ["0004_forge.sql", "0005_discovery.sql", "0006_redteam.sql", "0007_memory_court.sql", "0008_studio_services.sql", "0009_army.sql", "0010_service_redteam.sql"];
 const items = names.map((name) => {
   const sql = readFileSync(new URL(name, dir), "utf8");
   const statements = sql

@@ -16,6 +16,10 @@
  *   POST /api/studio/services/:slug/invoke  {request, document?, runtime?: "hardened"|"legacy", version?} → one guarded
  *                                           service reply (1 lab call). Owner-only like everything here; services are
  *                                           not public (services_public=false on /api/health).
+ *   GET  /api/studio/redteam/attacks         the fixed service red-team library (safety wave piece 2)
+ *   POST /api/studio/redteam/campaign        {slugs?, attack_ids?, runtimes?, max_probes?(≤10), max_calls?(≤300), pairs?}
+ *                                           → 202 job "studio.redteam" (one service call per probe × runtime)
+ *   GET  /api/studio/redteam/campaigns/:id   per-service / per-category legacy vs hardened breaches + rows
  */
 import { Hono } from "hono";
 import { audit } from "../audit";
@@ -32,6 +36,10 @@ import { validateItem } from "../eval/validate";
 import type { ResultInput } from "../eval/store";
 import type { DesignRow, StoredBrief } from "./types";
 import { invokeService, resolveService, ServiceError, SERVICE_RUNTIMES, type ServiceRuntime } from "./service";
+import { SERVICE_ATTACKS } from "../redteam/services/attacks";
+import { campaignRows, SERVICE_REDTEAM_KIND, ServiceRedteamError, serviceRedteamInit, summarize, type ServiceRedteamParams } from "../redteam/services/campaign";
+import { getJob, publicJob } from "../jobs/store";
+import { newId } from "../util";
 
 type R = { Bindings: Env };
 export const studioRoutes = new Hono<R>();
@@ -215,6 +223,31 @@ studioRoutes.post("/services/:slug/invoke", async (c) => {
     if (e instanceof ServiceError) return c.json({ error: e.message, code: e.code }, e.code === "not_found" ? 404 : 400);
     throw e;
   }
+});
+
+studioRoutes.get("/redteam/attacks", (c) =>
+  c.json({ attacks: SERVICE_ATTACKS.map((a) => ({ id: a.id, category: a.category, lang: a.lang, title: a.title, domains: a.domains, detectors: a.detectors })) }),
+);
+
+studioRoutes.post("/redteam/campaign", async (c) => {
+  const body = ((await c.req.json().catch(() => null)) ?? {}) as ServiceRedteamParams;
+  const id = newId("job");
+  try {
+    const init = await serviceRedteamInit(c.env, id, body);
+    const { job, reused } = await startJob(c.env, { id, kind: SERVICE_REDTEAM_KIND, params: init.params, state: init.state, total: init.total, max_calls: init.max_calls, dedupe_key: SERVICE_REDTEAM_KIND });
+    return c.json({ ...jobAccepted(job, reused), units: init.total, missing: init.state.missing }, 202);
+  } catch (e) {
+    if (e instanceof ServiceRedteamError) return c.json({ error: e.message, code: e.code }, 400);
+    throw e;
+  }
+});
+
+studioRoutes.get("/redteam/campaigns/:id", async (c) => {
+  const id = c.req.param("id");
+  const job = await getJob(c.env, id);
+  if (!job || job.kind !== SERVICE_REDTEAM_KIND) return c.json({ error: "not found" }, 404);
+  const rows = await campaignRows(c.env, id);
+  return c.json({ job: publicJob(job), summary: summarize(rows), rows: c.req.query("rows") === "0" ? undefined : rows });
 });
 
 export function mountStudioRoutes(app: { route: (path: string, r: Hono<any>) => unknown }): void {

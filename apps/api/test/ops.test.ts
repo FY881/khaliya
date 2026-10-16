@@ -9,16 +9,16 @@ import { api, freshState, login } from "./helpers";
 const E = env as unknown as Env;
 beforeEach(freshState);
 
-describe("embedded migrations (0004–0009) for remote DBs without wrangler access", () => {
+describe("embedded migrations (0004–0010) for remote DBs without wrangler access", () => {
   it("status shows them applied in tests; a DB missing the records gets them applied + recorded, idempotently", async () => {
     const cookie = await login();
     const s = await api(cookie, "/api/admin/migrations");
     expect(s.status).toBe(200);
-    expect(s.json.embedded.map((m: any) => m.name)).toEqual(["0004_forge.sql", "0005_discovery.sql", "0006_redteam.sql", "0007_memory_court.sql", "0008_studio_services.sql", "0009_army.sql"]);
-    await E.DB.prepare("DELETE FROM d1_migrations WHERE name IN ('0004_forge.sql','0005_discovery.sql','0006_redteam.sql','0007_memory_court.sql','0008_studio_services.sql','0009_army.sql')").run();
-    expect((await api(cookie, "/api/admin/migrations")).json.pending).toEqual(["0004_forge.sql", "0005_discovery.sql", "0006_redteam.sql", "0007_memory_court.sql", "0008_studio_services.sql", "0009_army.sql"]);
+    expect(s.json.embedded.map((m: any) => m.name)).toEqual(["0004_forge.sql", "0005_discovery.sql", "0006_redteam.sql", "0007_memory_court.sql", "0008_studio_services.sql", "0009_army.sql", "0010_service_redteam.sql"]);
+    await E.DB.prepare("DELETE FROM d1_migrations WHERE name IN ('0004_forge.sql','0005_discovery.sql','0006_redteam.sql','0007_memory_court.sql','0008_studio_services.sql','0009_army.sql','0010_service_redteam.sql')").run();
+    expect((await api(cookie, "/api/admin/migrations")).json.pending).toEqual(["0004_forge.sql", "0005_discovery.sql", "0006_redteam.sql", "0007_memory_court.sql", "0008_studio_services.sql", "0009_army.sql", "0010_service_redteam.sql"]);
     const a = await api(cookie, "/api/admin/migrations/apply", { method: "POST", body: {} });
-    expect(a.json).toMatchObject({ applied: ["0004_forge.sql", "0005_discovery.sql", "0006_redteam.sql", "0007_memory_court.sql", "0008_studio_services.sql", "0009_army.sql"], pending: [] });
+    expect(a.json).toMatchObject({ applied: ["0004_forge.sql", "0005_discovery.sql", "0006_redteam.sql", "0007_memory_court.sql", "0008_studio_services.sql", "0009_army.sql", "0010_service_redteam.sql"], pending: [] });
     const b = await api(cookie, "/api/admin/migrations/apply", { method: "POST", body: {} });
     expect(b.json.applied).toEqual([]);
     expect((await listAudit(E.DB, 5)).some((x) => x.action === "schema.migrate")).toBe(true);
