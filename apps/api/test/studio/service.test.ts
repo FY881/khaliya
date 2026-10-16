@@ -39,7 +39,7 @@ describe("Studio service invocation", () => {
   it("hardened (default): a dose answer is replaced by the safe health reply", async () => {
     const r = await invokeService(env, lab(), await target("health-information"), { request: "MOCK:service-say:خد 500 مجم كل 8 ساعات" });
     expect(r.runtime).toBe("hardened");
-    expect(r.runtime_version).toBe("rt-sec-v1");
+    expect(r.runtime_version).toBe("rt-sec-v2");
     expect(r.answer).toBe(HEALTH_SAFE_REPLY);
     expect(r.guard).toMatchObject({ blocked: true });
   });

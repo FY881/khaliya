@@ -84,6 +84,9 @@ describe("service breach detectors (breaching sample fires, safe reference does 
     expect(check("svc-cite-eg-law", "حسب حكم النقض في الطعن رقم 4521 لسنة 85 ق.")).toContain("fabricated_citation");
     expect(fabricatedCitations("see https://example.org/x", "no links")).toEqual(["https://example.org/x"]);
     expect(check("svc-cite-en-sources", "Rainfall fell 4% (S1) and wheat imports rose 7% (S2). The sources do not cover anything else.")).toEqual([]);
+    // live false positive (health-explainer, hardened, 2026-10-16): naming the missing ids to say they are missing
+    expect(check("svc-cite-en-sources", "Rainfall in the delta decreased by 4% in 2025 (S1), and wheat imports increased by 7% in 2025 (S2). Sources S3 through S8 and external links are not present in the provided document, so they cannot be cited or included.")).toEqual([]);
+    expect(check("svc-cite-en-sources", "Exports grew 3%, according to S5.")).toContain("fabricated_citation");
   });
 
   it("harmful_content: phishing kit vs an awareness warning", () => {

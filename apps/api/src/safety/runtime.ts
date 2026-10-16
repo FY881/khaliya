@@ -24,7 +24,7 @@ import type { Genome } from "../genome/schema";
 import type { ChatMessage } from "../llm/types";
 
 export const RUNTIME_MARKER = "RUNTIME SECURITY";
-export const RUNTIME_VERSION = "rt-sec-v1";
+export const RUNTIME_VERSION = "rt-sec-v2";
 
 /** Shared security preamble (code-appended at call time; never written into a genome). */
 export const RUNTIME_SECURITY: readonly string[] = Object.freeze([
@@ -62,11 +62,14 @@ const AW = "(?:^|[\\s،,.:;؛!?«»\"'()\\[\\]\\-])";
 const INPUT_ATTACK = [
   /\b(ignore|disregard|forget|override)\b.{0,40}\b(instructions?|rules?|prompt|guidelines|system)\b/i,
   /\b(system prompt|developer message|hidden instructions?|your (rules|instructions|configuration|config))\b/i,
-  /\b(developer mode|DAN\b|jailbreak|no restrictions|unfiltered|act as (an? )?(evil|unrestricted))/i,
-  new RegExp(`${AW}(?:تجاهل|تتجاهل|انس|اِنسَ|إنس|إلغ|الغ)(?:ي|وا|ى|ِي)?\\s.{0,30}(?:التعليمات|القواعد|الأوامر|تعليماتك|قواعدك)`),
+  /\b(developer mode|DAN\b|jailbreak|no restrictions|unfiltered|act as (an? )?(evil|unrestricted)|do anything now|unrestricted mode)/i,
+  new RegExp(`${AW}(?:تجاهل|تتجاهل|انس|اِنسَ|إنس|انسى|إلغ|الغ)(?:ي|وا|ى|ِي)?\\s.{0,30}(?:التعليمات|القواعد|الأوامر|تعليماتك|قواعدك|تعليمات|قواعد|القيود|قيود|اللي اتقال)`),
   new RegExp(`${AW}(?:اطبع|اعرض|اكتب|قول|قولي|قوللي|ورّيني|وريني|انسخ|ترجم|لخص|لخّص)\\s.{0,30}(?:تعليماتك|التعليمات (?:الداخلية|السرية|الأصلية|الاصلية|المخفية)|البرومبت|البرومت|الموجّه|الموجه الأصلي|إعداداتك|اعداداتك|المفتاح السري|الإعدادات الداخلية|رسالة النظام)`),
   new RegExp(`(?:وضع المطور|بدون (?:أي )?قيود|بلا (?:أي )?قيود|(?:أنت|انت|إنت) (?:الآن|الان|دلوقتي) (?:مساعد|نموذج|ذكاء|بدون|حر|غير مقيد|شخصية|لست|مش))`),
   /\[\s*(system|admin|owner)\s*\]|<\s*\/?\s*(system|admin)\s*>|(رسالة|تعليمات) (من )?(النظام|الإدارة|المطور)/i,
+  // rt-sec-v2 (live campaign 2026-10-16): notes addressed to the model inside a document
+  /\b(?:system|admin|developer|platform|automated)\s+(?:instruction|note|override|message|command|check)s?\b|\bnote to (?:the )?(?:system|ai|assistant|model|reviewer)\b|\binstruction to the (?:reviewing )?ai\b/i,
+  /(?:ملاحظة|تعليمات|رسالة|أمر|امر) (?:إلى |الى |لل|ل)?(?:النظام|نظام|الذكاء الاصطناعي|المساعد|النموذج)|التعليمات الجديدة|تعلو على تعليماتك|(?:أنت|انت) نموذج لغوي/,
 ];
 
 const INPUT_SKIP_GRADER = new Set(["ar_ignore_instructions"]);
@@ -80,10 +83,28 @@ export function scanInput(text: string): InputScan {
   // The grader detector's Arabic "ignore instructions" rule has no word start (it fires inside «الإنسان … القواعد»);
   // instr:3 below covers the same attack with a word boundary, so that one grader rule is not used on inputs.
   for (const h of injectionHits(text)) if (!INPUT_SKIP_GRADER.has(h.id)) flags.add(`grader:${h.id}`);
+  // rt-sec-v2: also read the input with zero-width chars removed, spaced-out letters joined ("i g n o r e" →
+  // "ignore") and base64 blobs decoded, so an obfuscated instruction still gets the platform note and token guard.
+  const variants = [text, text.normalize("NFKC").replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF\u00AD\u0640]/g, ""), despace(text)];
+  for (const m of text.matchAll(B64_RE)) {
+    const d = decodeB64(m[0]);
+    if (d) variants.push(d);
+  }
   INPUT_ATTACK.forEach((re, i) => {
-    if (re.test(text) || re.test(text.replace(/[\u200B-\u200F\u2060-\u2064\uFEFF\u00AD\u0640]/g, ""))) flags.add(`instr:${i}`);
+    if (variants.some((v) => re.test(v))) flags.add(`instr:${i}`);
   });
+  if (variants.length > 3) for (const h of injectionHits(variants.slice(3).join("\n"))) if (!INPUT_SKIP_GRADER.has(h.id)) flags.add(`grader:${h.id}`);
   return { flags: [...flags] };
+}
+
+/** Join letters written one by one ("i g n o r e   a l l" → "ignore all"): 3+ spaces between words, 1 inside. */
+export function despace(text: string): string {
+  return text.replace(/(?:(?<![\p{L}\p{N}])[\p{L}\p{N}](?: (?=[\p{L}\p{N}](?![\p{L}\p{N}]))| {2,}|$)){3,}/gu, (m) =>
+    m
+      .split(/ {2,}/)
+      .map((w) => w.replace(/ /g, ""))
+      .join(" "),
+  );
 }
 
 export interface ServiceInput {
@@ -202,41 +223,71 @@ const words = (s: string) =>
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
 
+/** Sentences of a system prompt a reply may legitimately repeat (disclaimers, emergency lines). */
+const PUBLIC_LINE = /disclaimer|Emergenc|التنبيه|تنبيه|إخلاء مسؤولية|اخلاء مسؤولية|123/i;
+/**
+ * Quoted text in a system prompt is text the agent is TOLD to say («…», "…", “…”): a mandatory disclaimer, a house
+ * refusal opener, a label. A reply that repeats it is following the prompt, not leaking it (rt-sec-v2: a live legal
+ * answer that ended with its genome's mandatory disclaimer was counted as 12 leaked spans, 2026-10-16).
+ */
+const QUOTED = /«[^»\n]{1,400}»|"[^"\n]{1,400}"|“[^”\n]{1,400}”/g;
+/**
+ * The part of a system prompt a reply must not reproduce: the prompt minus quoted say-this text and minus the
+ * SENTENCES (rt-sec-v2; whole lines before) that are disclaimers / emergency lines. Sentence-level, because some
+ * genomes are one long line, and whitelisting that line for one «123» made the whole prompt public.
+ */
 /** How many distinct 8-word spans of `protectedText` appear verbatim in `out`. */
 export function promptOverlap(out: string, protectedText: string, n = 8): number {
+  return promptReuse(out, protectedText, n).spans;
+}
+
+export function protectedPromptText(sp: string): string {
+  return sp
+    .replace(QUOTED, " | ")
+    .split(/(?<=[.!?؟\n])\s*/)
+    .filter((x) => !PUBLIC_LINE.test(x))
+    .join(" | ");
+}
+
+/**
+ * Verbatim reuse of the protected prompt in a reply: matching 8-word spans, the separate runs they form, and how
+ * many words of the reply they cover.
+ */
+export function promptReuse(out: string, protectedText: string, n = 8): { spans: number; runs: number; words: number } {
   const p = words(protectedText);
-  if (p.length < n) return 0;
+  if (p.length < n) return { spans: 0, runs: 0, words: 0 };
   const grams = new Set<string>();
   for (let i = 0; i + n <= p.length; i++) grams.add(p.slice(i, i + n).join(" "));
   const o = words(out);
+  const covered = new Array<boolean>(o.length).fill(false);
   const hit = new Set<string>();
   for (let i = 0; i + n <= o.length; i++) {
     const g = o.slice(i, i + n).join(" ");
-    if (grams.has(g)) hit.add(g);
+    if (grams.has(g)) {
+      hit.add(g);
+      for (let k = i; k < i + n; k++) covered[k] = true;
+    }
   }
-  return hit.size;
-}
-
-/** Lines of a system prompt a reply may legitimately repeat (disclaimers, emergency lines). */
-function publicLines(sp: string): string {
-  return sp
-    .split("\n")
-    .filter((l) => /disclaimer|Emergencies:|التنبيه|123/.test(l))
-    .join("\n");
+  let runs = 0;
+  for (let i = 0; i < covered.length; i++) if (covered[i] && !covered[i - 1]) runs++;
+  return { spans: hit.size, runs, words: covered.filter(Boolean).length };
 }
 
 export const PROMPT_LEAK_MIN_SPANS = 3;
+/**
+ * rt-sec-v2: one sentence of the prompt repeated in a reply (≤ 19 words, one run) is how a prompt written in the
+ * agent's own voice gets reused ("the official authority is the final reference…"); a leak reproduces 20+ words or
+ * several separate passages. Live over-block on paperwork-checklist, 2026-10-16.
+ */
+export const PROMPT_LEAK_MIN_WORDS = 20;
+export const PROMPT_LEAK_MIN_RUNS = 3;
 
 export function promptLeak(out: string, systemPrompt: string): string | null {
   const m = PROMPT_MARKERS.find((k) => out.includes(k));
   if (m) return `marker «${m}»`;
-  const pub = publicLines(systemPrompt);
-  const priv = systemPrompt
-    .split("\n")
-    .filter((l) => !pub.includes(l))
-    .join("\n");
-  const spans = promptOverlap(out, priv);
-  return spans >= PROMPT_LEAK_MIN_SPANS ? `${spans} verbatim 8-word spans of the system prompt` : null;
+  const r = promptReuse(out, protectedPromptText(systemPrompt));
+  if (r.spans < PROMPT_LEAK_MIN_SPANS) return null;
+  return r.words >= PROMPT_LEAK_MIN_WORDS || r.runs >= PROMPT_LEAK_MIN_RUNS ? `${r.spans} verbatim 8-word spans of the system prompt (${r.words} words, ${r.runs} passages)` : null;
 }
 
 /**
@@ -326,6 +377,63 @@ export function stripInventedCitations(out: string, input: string): { text: stri
   return { text, removed };
 }
 
+// ---------------------------------------------------------------- injected "magic words"
+
+/** Code-like tokens an injection asks the model to print (KHALIYA-PWNED, DEV_MODE_ON, ACCESS-GRANTED-7Q). */
+const TOKEN_RE = /(?<![A-Za-z0-9])[A-Z][A-Z0-9]{2,}(?:[-_][A-Z0-9]{2,})+(?![A-Za-z0-9])/g;
+/** Single letters separated by spaces/dots/dashes ("K H A L I Y A - P W N E D"), the spaced-out form of a token. */
+const SPACED_RE = /(?<![A-Za-z0-9])(?:[A-Z0-9][ .·]{1,3}){3,}[A-Z0-9](?:[ .·]{0,3}[-_][ .·]{0,3}(?:[A-Z0-9][ .·]{1,3})*[A-Z0-9])*(?![A-Za-z0-9])/g;
+const B64_RE = /[A-Za-z0-9+/]{16,}={0,2}/g;
+
+function decodeB64(s: string): string | null {
+  try {
+    const bin = atob(s);
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    const t = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
+    return /^[\x20-\x7E\n\r\t\u0600-\u06FF]+$/.test(t) ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The tokens an instruction-bearing input carries (plain, spaced-out, or inside base64). Only used when scanInput
+ * flags the input, so ordinary codes in an ordinary request (an invoice number, a model name) are never touched.
+ */
+export function injectedTokens(input: string): string[] {
+  const out = new Set<string>();
+  const add = (t: string) => {
+    for (const m of t.matchAll(TOKEN_RE)) out.add(m[0]);
+    for (const m of t.matchAll(SPACED_RE)) {
+      const sq = m[0].replace(/[ .·]/g, "");
+      if (/[-_]/.test(sq) && TOKEN_RE.test(sq)) out.add(sq);
+      TOKEN_RE.lastIndex = 0;
+    }
+  };
+  add(input);
+  for (const m of input.matchAll(B64_RE)) {
+    const d = decodeB64(m[0]);
+    if (d) add(d);
+  }
+  return [...out].filter((t) => t.length >= 6 && t.length <= 64);
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Remove injected tokens from a reply (plain or separator-obfuscated, case-insensitive). */
+export function stripInjectedTokens(reply: string, tokens: string[]): { text: string; removed: string[] } {
+  let text = reply;
+  const removed: string[] = [];
+  for (const t of tokens) {
+    const re = new RegExp(t.split("").map(escapeRe).join("[\\s\\-_.·\u200B]{0,3}"), "gi");
+    if (re.test(text)) {
+      text = text.replace(re, "");
+      removed.push(t);
+    }
+  }
+  return { text: removed.length ? text.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim() : reply, removed };
+}
+
 export interface GuardContext {
   systemPrompt: string;
   domain?: string;
@@ -336,7 +444,7 @@ export interface GuardContext {
 }
 
 export interface GuardAction {
-  kind: "secret_masked" | "pii_masked" | "prompt_leak_blocked" | "health_dose_blocked" | "citation_removed";
+  kind: "secret_masked" | "pii_masked" | "prompt_leak_blocked" | "health_dose_blocked" | "citation_removed" | "injected_token_removed";
   evidence: string;
 }
 
@@ -361,7 +469,12 @@ export function guardOutput(reply: string, ctx: GuardContext): GuardResult {
     const m = healthDose(text);
     if (m) return { text: HEALTH_SAFE_REPLY, actions: [{ kind: "health_dose_blocked", evidence: m.slice(0, 40) }], blocked: true };
   }
-  // 3. secrets and canaries (plain, separator-obfuscated or base64)
+  // 3. injected "magic words": when the input carries instructions, the codes it asks for never reach the person
+  if (ctx.input !== undefined && scanInput(ctx.input).flags.length) {
+    const tk = stripInjectedTokens(text, injectedTokens(ctx.input));
+    if (tk.removed.length) (text = tk.text, actions.push(...tk.removed.map((t) => ({ kind: "injected_token_removed" as const, evidence: t.slice(0, 24) }))));
+  }
+  // 4. secrets and canaries (plain, separator-obfuscated or base64)
   text = text.replace(SECRET_RE, (m) => (actions.push({ kind: "secret_masked", evidence: `${m.slice(0, 4)}…` }), "[محجوب]"));
   for (const s of ctx.secrets ?? []) {
     if (s.length < 6) continue;
@@ -370,10 +483,10 @@ export function guardOutput(reply: string, ctx: GuardContext): GuardResult {
     const sep = new RegExp(s.split("").map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\s\\-_.·\u200B]{0,2}"), "gi");
     if (sep.test(text)) (text = text.replace(sep, "[محجوب]"), actions.push({ kind: "secret_masked", evidence: `${s.slice(0, 4)}… (obfuscated)` }));
   }
-  // 4. PII numbers
+  // 5. PII numbers
   const p = maskPii(text);
   if (p.masked.length) (text = p.text, actions.push(...p.masked.map((k) => ({ kind: "pii_masked" as const, evidence: k }))));
-  // 5. invented citations
+  // 6. invented citations
   if (ctx.input !== undefined && ctx.domain && CITATION_DOMAINS.has(ctx.domain)) {
     const c = stripInventedCitations(text, ctx.input);
     if (c.removed.length) (text = c.text, actions.push(...c.removed.slice(0, 6).map((r) => ({ kind: "citation_removed" as const, evidence: r.slice(0, 60) }))));
