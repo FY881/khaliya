@@ -4,7 +4,7 @@ import { LabLLM } from "../../src/eval/llm";
 import { Registry } from "../../src/registry/registry";
 import { STARTER_ORG, starterGenome } from "../../src/registry/seed";
 import { HEALTH_SAFE_REPLY, PROMPT_SAFE_REPLY } from "../../src/safety/runtime";
-import { invokeService, resolveService, ServiceError, type ServiceTarget } from "../../src/studio/service";
+import { ensureDisclaimer, hasDisclaimer, invokeService, resolveService, ServiceError, type ServiceTarget } from "../../src/studio/service";
 import { ensureStudioServicesSchema } from "../../src/services/schema";
 import { createDesign, seedBriefs } from "../../src/studio/store";
 import { api, freshState, login } from "../helpers";
@@ -86,5 +86,59 @@ describe("Studio service invocation", () => {
     expect((await api(cookie, "/api/studio/services/nope/invoke", { method: "POST", body: { request: "x" } })).status).toBe(404);
     expect((await api(cookie, "/api/studio/services/health-explainer/invoke", { method: "POST", body: { request: "x", runtime: "raw" } })).status).toBe(400);
     expect((await api(cookie, "/api/studio/services/health-explainer/invoke", { method: "POST", body: {} })).status).toBe(400);
+  });
+
+  // ------------------------------------------------------------ mandatory disclaimer (2026-10-17)
+  const HEALTH_D = { ar: "ده شرح لمعلومات عامة ومش تشخيص طبي، وللحالة الفردية لازم طبيب.", en: "General health information, not a medical diagnosis." };
+  const LEGAL_D = { ar: "دي معلومات قانونية عامة ومش استشارة، ولحالتك تحديدًا راجع محامٍ.", en: "General legal information, not legal advice." };
+
+  it("disclaimer: appended once when missing (legal + health), never duplicated", () => {
+    const a = ensureDisclaimer("الإيجار القديم بيتجدد حسب القانون الجديد.", LEGAL_D);
+    expect(a.appended).toBe(true);
+    expect(a.text.endsWith(LEGAL_D.ar)).toBe(true);
+    const again = ensureDisclaimer(a.text, LEGAL_D);
+    expect(again).toEqual({ text: a.text, appended: false });
+    const h = ensureDisclaimer("الضغط العالي معناه إن قوة دفع الدم أعلى من الطبيعي.", HEALTH_D);
+    expect(h.text.endsWith(HEALTH_D.ar)).toBe(true);
+    expect(ensureDisclaimer("High blood pressure means the force of blood is above normal.", HEALTH_D).text.endsWith(HEALTH_D.en)).toBe(true);
+    expect(ensureDisclaimer("أي حاجة", undefined)).toEqual({ text: "أي حاجة", appended: false });
+    expect(ensureDisclaimer("", LEGAL_D)).toEqual({ text: LEGAL_D.ar, appended: true });
+  });
+
+  it("disclaimer: tolerates wording variants (diacritics, paraphrase, negated-advice cue, English)", () => {
+    const variants: [string, { ar: string; en: string }][] = [
+      ["الشرح كذا.\n\nدى معلومات قانونيه عامه ومش إستشارة، ولحالتك تحديداً راجع محامى.", LEGAL_D],
+      ["الشرح كذا. ملحوظة: المعلومات دي عامة وليست استشارة قانونية، ولازم محامي لحالتك.", LEGAL_D],
+      ["الشرح كذا. ده لا يغني عن استشارة محامٍ مختص.", LEGAL_D],
+      ["Explanation. This is general legal information, not legal advice.", LEGAL_D],
+      ["الشرح كذا. ده شرح عام وليس تشخيصًا طبيًا، راجع طبيبك.", HEALTH_D],
+      ["الشرح كذا. المعلومات دي لا تغني عن الطبيب.", HEALTH_D],
+      ["Explanation. General health information only, not medical advice.", HEALTH_D],
+      ["الشرح كذا. ده شرح لمعلومات عامة ومش تشخيص طبي، وللحالة الفردية لازم طبيب.", HEALTH_D],
+    ];
+    for (const [reply, d] of variants) expect(ensureDisclaimer(reply, d), reply).toEqual({ text: reply, appended: false });
+    // the safe health reply already carries it
+    expect(hasDisclaimer(HEALTH_SAFE_REPLY, HEALTH_D.ar)).toBe(true);
+    // a passing mention of a doctor or a lawyer is NOT the disclaimer
+    expect(hasDisclaimer("روح للمحكمة الابتدائية وقدّم الطلب.", LEGAL_D.ar)).toBe(false);
+    expect(hasDisclaimer("اسأل الطبيب عن الجرعة.", HEALTH_D.ar)).toBe(false);
+  });
+
+  it("disclaimer: hardened replies from the promoted legal / health services carry it; legacy stays raw", async () => {
+    await promoted();
+    const t = await resolveService(env, "health-explainer");
+    expect(t!.disclaimer).toEqual(HEALTH_D);
+    const r = await invokeService(env, lab(), t!, { request: "MOCK:service-say:الضغط العالي معناه إن قوة دفع الدم أعلى من الطبيعي." });
+    expect(r.answer).toBe(`الضغط العالي معناه إن قوة دفع الدم أعلى من الطبيعي.\n\n${HEALTH_D.ar}`);
+    expect(r.disclaimer_appended).toBe(true);
+    const blocked = await invokeService(env, lab(), t!, { request: "MOCK:service-say:خد 500 مجم كل 8 ساعات" });
+    expect(blocked.answer).toBe(HEALTH_SAFE_REPLY);
+    expect(blocked.disclaimer_appended).toBeUndefined();
+    const legacy = await invokeService(env, lab(), t!, { request: "MOCK:service-say:الضغط العالي." }, { runtime: "legacy" });
+    expect(legacy.answer).toBe("الضغط العالي.");
+    const legal = await invokeService(env, lab(), { ...(await target("legal-information-eg")), disclaimer: LEGAL_D }, { request: "MOCK:service-say:قدّم الطلب في المحكمة الابتدائية." });
+    expect(legal.answer.endsWith(LEGAL_D.ar)).toBe(true);
+    const noD = await invokeService(env, lab(), await target("research"), { request: "MOCK:service-say:ملخص." });
+    expect(noD.answer).toBe("ملخص.");
   });
 });

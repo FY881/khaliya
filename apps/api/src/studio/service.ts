@@ -36,6 +36,8 @@ export interface ServiceTarget {
   /** Safety domain of the brief (SafetyProfile.domain), e.g. "health-information". */
   domain?: string;
   brief_id?: string;
+  /** The brief's mandatory disclaimer (SafetyProfile.disclaimer_ar / _en); hardened mode appends it when a reply omits it. */
+  disclaimer?: { ar?: string; en?: string };
 }
 
 export class ServiceError extends Error {
@@ -62,7 +64,9 @@ export async function resolveService(env: Env, slug: string, version?: number): 
   if (!genome) return null;
   const design = await getDesign(env, row.design_id).catch(() => null);
   const brief: StudioBrief | null = design ? await loadBrief(env, design.brief_id).catch(() => null) : null;
-  return { slug: row.slug, version: row.version, genome, domain: brief?.safety?.domain, brief_id: brief?.id };
+  const sp = brief?.safety;
+  const disclaimer = sp && (sp.disclaimer_ar || sp.disclaimer_en) ? { ...(sp.disclaimer_ar ? { ar: sp.disclaimer_ar } : {}), ...(sp.disclaimer_en ? { en: sp.disclaimer_en } : {}) } : undefined;
+  return { slug: row.slug, version: row.version, genome, domain: sp?.domain, brief_id: brief?.id, ...(disclaimer ? { disclaimer } : {}) };
 }
 
 export interface InvokeOptions {
@@ -83,6 +87,8 @@ export interface ServiceReply {
   answer: string;
   /** hardened: the guard that ran. legacy: null. */
   guard: Pick<GuardResult, "actions" | "blocked"> | null;
+  /** hardened: the brief's mandatory disclaimer was missing from the model's reply and was appended. */
+  disclaimer_appended?: boolean;
   /** legacy only: what guardOutput would have done to this reply. */
   guard_preview?: Pick<GuardResult, "actions" | "blocked">;
   input_flags: string[];
@@ -127,5 +133,66 @@ export async function invokeService(env: Env, lab: LabLLM, t: ServiceTarget, raw
     tokens: res.tokensIn + res.tokensOut,
   };
   if (runtime === "legacy") return { ...base, runtime_version: null, answer: raw, guard: null, guard_preview: { actions: g.actions, blocked: g.blocked } };
-  return { ...base, runtime_version: RUNTIME_VERSION, answer: g.text, guard: { actions: g.actions, blocked: g.blocked } };
+  const d = ensureDisclaimer(g.text, t.disclaimer);
+  return { ...base, runtime_version: RUNTIME_VERSION, answer: d.text, guard: { actions: g.actions, blocked: g.blocked }, ...(d.appended ? { disclaimer_appended: true } : {}) };
+}
+
+// ---------------------------------------------------------------- mandatory disclaimer (hardened mode)
+
+/** Arabic/Latin fold for presence checks: no diacritics/tatweel, one alef/ya/ta-marbuta/hamza form, no punctuation. */
+export function foldText(s: string): string {
+  return String(s ?? "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\u064B-\u0652\u0670\u0640]/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[ؤئ]/g, "ء")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+const STOP = new Set(["ده", "دي", "دا", "و", "او", "في", "من", "مش", "لا", "ليس", "ليست", "the", "a", "an", "not", "and", "or", "of", "for", "this", "is"]);
+/** Content words of a folded text, with a leading و/ال/لل/بال/وال stripped (so «والحالة» ~ «حالة»). */
+function contentWords(folded: string): string[] {
+  return folded
+    .split(" ")
+    .map((w) => (/^[\u0600-\u06FF]/.test(w) ? w.replace(/^(وال|بال|لل|فال|كال|ال|و)(?=[\u0600-\u06FF]{3,})/, "") : w))
+    .filter((w) => w.length >= 3 && !STOP.has(w));
+}
+
+/**
+ * Domain-agnostic "says it is not advice" cues. A reply that already carries one of these phrasings of its disclaimer
+ * must not get a second copy (models paraphrase: «مش استشارة قانونية», «لا يغني عن الطبيب», "not medical advice").
+ */
+const NEGATED_ADVICE = [
+  /(مش|ليس|ليست|لا تعتبر|لا يعتبر|لا تعد|لا يعد|لا تغني عن|لا يغني عن|ولا تغني عن|ليست بديلا عن|ليس بديلا عن|مش بديل عن)( [^ ]+){0,3} (استشاره|تشخيص|نصيحه)/,
+  /(لا تغني|لا يغني|مش بتغني|مش بيغني|ليست بديلا|ليس بديلا|مش بديل)( [^ ]+){0,3} (عن )?(ال)?(طبيب|دكتور|محامي|محام|مختص|استشاره)/,
+  /\bnot (a |an )?(substitute for |replacement for )?(professional |medical |legal )?(diagnosis|advice|consultation)\b/,
+];
+
+/** True when `reply` already carries `disclaimer` (exact, folded, a paraphrase sharing most of its words, or a negated-advice cue). */
+export function hasDisclaimer(reply: string, disclaimer: string): boolean {
+  const r = foldText(reply);
+  const d = foldText(disclaimer);
+  if (!d) return true;
+  if (r.includes(d)) return true;
+  if (NEGATED_ADVICE.some((re) => re.test(r))) return true;
+  const want = [...new Set(contentWords(d))];
+  if (!want.length) return false;
+  const have = new Set(contentWords(r));
+  const hit = want.filter((w) => have.has(w) || [...have].some((h) => h.length >= 4 && (h.startsWith(w) || w.startsWith(h)))).length;
+  return hit / want.length >= 0.6;
+}
+
+/** Append the brief's mandatory disclaimer when the reply omits it (Arabic unless the reply has no Arabic and an English one exists). */
+export function ensureDisclaimer(reply: string, disclaimer?: { ar?: string; en?: string }): { text: string; appended: boolean } {
+  const text = String(reply ?? "");
+  if (!disclaimer || !(disclaimer.ar || disclaimer.en)) return { text, appended: false };
+  const all = [disclaimer.ar, disclaimer.en].filter((x): x is string => !!x);
+  if (all.some((d) => hasDisclaimer(text, d))) return { text, appended: false };
+  const arabic = /[\u0600-\u06FF]/.test(text) || !text.trim();
+  const pick = (arabic ? disclaimer.ar ?? disclaimer.en : disclaimer.en ?? disclaimer.ar)!;
+  return { text: text.trim() ? `${text.trimEnd()}\n\n${pick}` : pick, appended: true };
 }
